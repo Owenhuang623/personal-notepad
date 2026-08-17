@@ -25,9 +25,16 @@ export default function LoginPage() {
         body: JSON.stringify({ password }),
       });
 
-      if (!response.ok) {
+      // Only a 401 means the password was wrong — anything else is the server
+      // failing, usually a missing env var, and shouldn't be blamed on the typing.
+      if (response.status === 401) {
         setError("Incorrect password");
         setPassword("");
+        return;
+      }
+
+      if (!response.ok) {
+        setError("Server error — check the environment variables");
         return;
       }
 
