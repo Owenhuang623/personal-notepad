@@ -8,6 +8,7 @@ import { Sidebar } from "./Sidebar";
 export type NoteSummary = {
   id: string;
   preview: string;
+  createdAt: string;
   updatedAt: string;
 };
 

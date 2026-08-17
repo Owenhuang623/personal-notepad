@@ -9,6 +9,7 @@ import { notes } from "@/db/schema";
 export type NoteSummary = {
   id: string;
   preview: string;
+  createdAt: string;
   updatedAt: string;
 };
 
@@ -16,6 +17,7 @@ export type NoteDetail = {
   id: string;
   kind: "scratch" | "saved";
   content: string;
+  createdAt: string;
   updatedAt: string;
 };
 
@@ -24,13 +26,18 @@ export async function listSavedNotes(): Promise<NoteSummary[]> {
     .select({
       id: notes.id,
       preview: sql<string>`substring(${notes.content} from 1 for 200)`,
+      createdAt: notes.createdAt,
       updatedAt: notes.updatedAt,
     })
     .from(notes)
     .where(eq(notes.kind, "saved"))
     .orderBy(desc(notes.updatedAt));
 
-  return rows.map((row) => ({ ...row, updatedAt: row.updatedAt.toISOString() }));
+  return rows.map((row) => ({
+    ...row,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  }));
 }
 
 /**
@@ -44,6 +51,7 @@ export async function getScratchNote(): Promise<NoteDetail> {
       id: existing.id,
       kind: "scratch",
       content: existing.content,
+      createdAt: existing.createdAt.toISOString(),
       updatedAt: existing.updatedAt.toISOString(),
     };
   }
@@ -59,6 +67,7 @@ export async function getScratchNote(): Promise<NoteDetail> {
       id: created.id,
       kind: "scratch",
       content: created.content,
+      createdAt: created.createdAt.toISOString(),
       updatedAt: created.updatedAt.toISOString(),
     };
   }
@@ -80,6 +89,7 @@ export async function getSavedNote(id: string): Promise<NoteDetail | null> {
     id: row.id,
     kind: "saved",
     content: row.content,
+    createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
 }

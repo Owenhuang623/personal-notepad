@@ -3,9 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { deriveTitle } from "@/lib/format";
+import { countWords, deriveTitle } from "@/lib/format";
 
 import { useNotes, useSidebar } from "./AppShell";
+import { ClientDate } from "./ClientDate";
 import { ConfirmButton } from "./ConfirmButton";
 
 const AUTOSAVE_DELAY = 600;
@@ -17,10 +18,12 @@ export function Editor({
   noteId,
   kind,
   initialContent,
+  createdAt,
 }: {
   noteId: string;
   kind: "scratch" | "saved";
   initialContent: string;
+  createdAt: string;
 }) {
   const [content, setContent] = useState(initialContent);
   const [status, setStatus] = useState<Status>("saved");
@@ -35,6 +38,7 @@ export function Editor({
   const router = useRouter();
 
   const draftKey = `np:draft:${noteId}`;
+  const wordCount = countWords(content);
 
   const applyContent = useCallback((value: string) => {
     contentRef.current = value;
@@ -196,8 +200,14 @@ export function Editor({
         )}
       </header>
 
-      <div className="min-h-0 flex-1">
-        <div className="mx-auto h-full w-full max-w-[46rem]">
+      <div className="relative min-h-0 flex-1">
+        <div className="mx-auto flex h-full w-full max-w-[46rem] flex-col px-5 sm:px-8">
+          {kind === "saved" && (
+            <p className="shrink-0 pt-7 text-[12px] text-ink-faint">
+              <ClientDate iso={createdAt} variant="long" />
+            </p>
+          )}
+
           <textarea
             ref={textareaRef}
             value={content}
@@ -205,9 +215,22 @@ export function Editor({
             autoFocus
             spellCheck
             placeholder={kind === "scratch" ? "Start typing…" : "Empty note"}
-            className="h-full w-full resize-none bg-transparent px-5 py-8 text-[15px] leading-7 outline-none placeholder:text-ink-faint sm:px-8"
+            /*
+             * The tall bottom padding is deliberate: it lets you keep scrolling
+             * past the last line so the line you're writing never sits pinned
+             * against the bottom edge of the window.
+             */
+            className={`min-h-0 w-full flex-1 resize-none bg-transparent pb-[50vh] text-[15px] leading-7 outline-none placeholder:text-ink-faint ${
+              kind === "saved" ? "pt-3" : "pt-8"
+            }`}
           />
         </div>
+
+        {wordCount > 0 && (
+          <p className="pointer-events-none absolute bottom-3 right-4 text-[11.5px] tabular-nums text-ink-faint select-none">
+            {wordCount === 1 ? "1 word" : `${wordCount} words`}
+          </p>
+        )}
       </div>
     </div>
   );

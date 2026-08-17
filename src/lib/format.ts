@@ -23,6 +23,31 @@ export function deriveSnippet(content: string): string {
   return rest.length > 80 ? `${rest.slice(0, 80).trimEnd()}…` : rest;
 }
 
+export function countWords(text: string): number {
+  const trimmed = text.trim();
+  return trimmed ? trimmed.split(/\s+/).length : 0;
+}
+
+/** Compact, for the sidebar: "Aug 17", or "Aug 17, 2025" once the year differs. */
+export function formatShortDate(iso: string): string {
+  const date = new Date(iso);
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+  });
+}
+
+/** The dateline above a note: "Monday, August 17, 2026". */
+export function formatLongDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;

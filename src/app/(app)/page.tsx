@@ -6,5 +6,5 @@ export const dynamic = "force-dynamic";
 export default async function ScratchpadPage() {
   const note = await getScratchNote();
 
-  return <Editor key={note.id} noteId={note.id} kind="scratch" initialContent={note.content} />;
+  return <Editor key={note.id} noteId={note.id} kind="scratch" initialContent={note.content} createdAt={note.createdAt} />;
 }

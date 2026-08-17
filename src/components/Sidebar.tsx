@@ -4,9 +4,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { deriveSnippet, deriveTitle, relativeTime } from "@/lib/format";
+import { deriveSnippet, deriveTitle } from "@/lib/format";
 
 import { useNotes, useSidebar } from "./AppShell";
+import { ClientDate } from "./ClientDate";
 import { Logo } from "./Logo";
 
 export function Sidebar() {
@@ -111,7 +112,7 @@ export function Sidebar() {
                       {deriveTitle(note.preview)}
                     </span>
                     <span className="mt-0.5 block truncate text-[12px] text-ink-faint">
-                      {relativeTime(note.updatedAt)}
+                      <ClientDate iso={note.createdAt} variant="short" />
                       {snippet && ` · ${snippet}`}
                     </span>
                   </Link>
