@@ -100,6 +100,13 @@ export function Sidebar() {
                 <li key={note.id}>
                   <Link
                     href={`/n/${note.id}`}
+                    /*
+                     * Dynamic routes aren't prefetched by <Link> automatically,
+                     * so warm the payload on intent — by the time the click
+                     * lands the note is usually already in the router cache.
+                     */
+                    onMouseEnter={() => router.prefetch(`/n/${note.id}`)}
+                    onTouchStart={() => router.prefetch(`/n/${note.id}`)}
                     className={`block rounded-lg px-2.5 py-2 transition-colors ${
                       active ? "bg-active" : "hover:bg-hover"
                     }`}
