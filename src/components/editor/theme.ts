@@ -57,6 +57,12 @@ const base = EditorView.theme({
   },
   ".cm-task-done": { color: "var(--ink-faint)", textDecoration: "line-through" },
   ".cm-bullet": { color: "var(--ink-faint)" },
+  ".cm-hr": { borderBottom: "1px solid var(--line-strong)" },
+  ".cm-codeblock": {
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+    fontSize: "0.92em",
+    backgroundColor: "var(--hover)",
+  },
   ".cm-quote": {
     borderLeft: "2px solid var(--line-strong)",
     paddingLeft: "0.75em",

@@ -129,7 +129,9 @@ function build(view: EditorView) {
 
         if (node.name === "ListItem") {
           const mark = node.node.getChild("ListMark");
-          const task = node.node.getChild("TaskMarker");
+          // TaskMarker sits under an intermediate Task node — ListItem > Task >
+          // TaskMarker — so a direct getChild("TaskMarker") finds nothing.
+          const task = node.node.getChild("Task")?.getChild("TaskMarker") ?? null;
           const markLine = mark ? state.doc.lineAt(mark.from).number : line.number;
           const markActive = active.has(markLine);
 
@@ -150,10 +152,37 @@ function build(view: EditorView) {
                 );
               }
             }
-          } else if (mark && !markActive && state.doc.sliceString(mark.from, mark.to) !== ".") {
-            replaceWith(mark.from, mark.to, new BulletWidget());
+          } else if (mark && !markActive) {
+            // Only unordered marks become bullets; "1." and "2)" carry meaning.
+            const text = state.doc.sliceString(mark.from, mark.to);
+            if (/^[-*+]$/.test(text)) replaceWith(mark.from, mark.to, new BulletWidget());
           }
 
+          return;
+        }
+
+        if (node.name === "HorizontalRule") {
+          decorations.push(Decoration.line({ class: "cm-hr" }).range(line.from, line.from));
+          if (!isActive) hide(line.from, line.to);
+          return;
+        }
+
+        if (node.name === "FencedCode") {
+          for (let pos = node.from; pos <= node.to; ) {
+            const codeLine = state.doc.lineAt(pos);
+            decorations.push(
+              Decoration.line({ class: "cm-codeblock" }).range(codeLine.from, codeLine.from),
+            );
+            if (codeLine.to >= node.to) break;
+            pos = codeLine.to + 1;
+          }
+          return;
+        }
+
+        // Leaves just the link text: the brackets, parens and URL all hide.
+        if (node.name === "LinkMark" || node.name === "URL") {
+          const parent = node.node.parent?.name;
+          if (!isActive && (parent === "Link" || parent === "Image")) hide(node.from, node.to);
           return;
         }
 
