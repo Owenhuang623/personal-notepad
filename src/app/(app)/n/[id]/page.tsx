@@ -21,5 +21,5 @@ export default async function NotePage({ params }: Props) {
 
   if (!note) notFound();
 
-  return <Editor key={note.id} noteId={note.id} kind="saved" initialContent={note.content} createdAt={note.createdAt} />;
+  return <Editor key={note.id} noteId={note.id} kind="saved" initialContent={note.content} createdAt={note.createdAt} initialPinned={note.pinnedAt !== null} />;
 }

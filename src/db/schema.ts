@@ -16,6 +16,8 @@ export const notes = pgTable(
       .notNull()
       .default("saved"),
     content: text("content").notNull().default(""),
+    /** Null means unpinned. Storing the moment rather than a flag lets pinned notes keep their own order. */
+    pinnedAt: timestamp("pinned_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

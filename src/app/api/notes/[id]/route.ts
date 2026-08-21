@@ -10,13 +10,28 @@ export async function PATCH(request: Request, { params }: Params) {
   const { id } = await params;
   const body = await request.json().catch(() => null);
 
-  if (typeof body?.content !== "string") {
-    return NextResponse.json({ error: "content must be a string" }, { status: 400 });
+  // Only the fields actually present are written, so an autosave carrying just
+  // `content` never disturbs the pin, and a pin toggle never touches the text.
+  const updates: { content?: string; updatedAt?: Date; pinnedAt?: Date | null } = {};
+
+  if (typeof body?.content === "string") {
+    updates.content = body.content;
+    updates.updatedAt = new Date();
+  }
+
+  if (typeof body?.pinned === "boolean") {
+    // Pinning deliberately leaves updatedAt alone — it isn't an edit, and
+    // bumping it would shuffle the note's position in the list.
+    updates.pinnedAt = body.pinned ? new Date() : null;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: "nothing to update" }, { status: 400 });
   }
 
   const [updated] = await getDb()
     .update(notes)
-    .set({ content: body.content, updatedAt: new Date() })
+    .set(updates)
     .where(eq(notes.id, id))
     .returning({ id: notes.id, updatedAt: notes.updatedAt });
 

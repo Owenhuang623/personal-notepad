@@ -9,6 +9,7 @@ import { notes } from "@/db/schema";
 export type NoteSummary = {
   id: string;
   preview: string;
+  pinnedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -17,6 +18,7 @@ export type NoteDetail = {
   id: string;
   kind: "scratch" | "saved";
   content: string;
+  pinnedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -26,15 +28,19 @@ export async function listSavedNotes(): Promise<NoteSummary[]> {
     .select({
       id: notes.id,
       preview: sql<string>`substring(${notes.content} from 1 for 200)`,
+      pinnedAt: notes.pinnedAt,
       createdAt: notes.createdAt,
       updatedAt: notes.updatedAt,
     })
     .from(notes)
     .where(eq(notes.kind, "saved"))
-    .orderBy(desc(notes.updatedAt));
+    // Pinned first (nulls sort last), most recently pinned at the top of that
+    // group; everything else falls back to most recently edited.
+    .orderBy(sql`${notes.pinnedAt} is null`, desc(notes.pinnedAt), desc(notes.updatedAt));
 
   return rows.map((row) => ({
     ...row,
+    pinnedAt: row.pinnedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   }));
@@ -51,7 +57,8 @@ export async function getScratchNote(): Promise<NoteDetail> {
       id: existing.id,
       kind: "scratch",
       content: existing.content,
-      createdAt: existing.createdAt.toISOString(),
+      pinnedAt: existing.pinnedAt?.toISOString() ?? null,
+    createdAt: existing.createdAt.toISOString(),
       updatedAt: existing.updatedAt.toISOString(),
     };
   }
@@ -67,7 +74,8 @@ export async function getScratchNote(): Promise<NoteDetail> {
       id: created.id,
       kind: "scratch",
       content: created.content,
-      createdAt: created.createdAt.toISOString(),
+      pinnedAt: created.pinnedAt?.toISOString() ?? null,
+    createdAt: created.createdAt.toISOString(),
       updatedAt: created.updatedAt.toISOString(),
     };
   }
@@ -89,6 +97,7 @@ export async function getSavedNote(id: string): Promise<NoteDetail | null> {
     id: row.id,
     kind: "saved",
     content: row.content,
+    pinnedAt: row.pinnedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

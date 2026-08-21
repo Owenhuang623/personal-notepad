@@ -8,6 +8,7 @@ import { countWords, deriveTitle } from "@/lib/format";
 import { useNotes, useSidebar } from "./AppShell";
 import { ClientDate } from "./ClientDate";
 import { ConfirmButton } from "./ConfirmButton";
+import { PinIcon } from "./PinIcon";
 
 const AUTOSAVE_DELAY = 600;
 const RETRY_DELAY = 5000;
@@ -19,15 +20,18 @@ export function Editor({
   kind,
   initialContent,
   createdAt,
+  initialPinned,
 }: {
   noteId: string;
   kind: "scratch" | "saved";
   initialContent: string;
   createdAt: string;
+  initialPinned: boolean;
 }) {
   const [content, setContent] = useState(initialContent);
   const [status, setStatus] = useState<Status>("saved");
   const [flash, setFlash] = useState<string | null>(null);
+  const [pinned, setPinned] = useState(initialPinned);
 
   const contentRef = useRef(initialContent);
   const savedRef = useRef(initialContent);
@@ -152,6 +156,24 @@ export function Editor({
     textareaRef.current?.focus();
   }
 
+  async function togglePin() {
+    const next = !pinned;
+    setPinned(next); // optimistic — the sidebar reorders as soon as refresh lands
+
+    const response = await fetch(`/api/notes/${noteId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pinned: next }),
+    });
+
+    if (!response.ok) {
+      setPinned(!next);
+      return;
+    }
+
+    await refresh();
+  }
+
   async function deleteNote() {
     const response = await fetch(`/api/notes/${noteId}`, { method: "DELETE" });
     if (!response.ok) return;
@@ -196,7 +218,20 @@ export function Editor({
             <ConfirmButton label="Clear" confirmLabel="Confirm" onConfirm={clearScratchpad} />
           </>
         ) : (
-          <ConfirmButton label="Delete" confirmLabel="Confirm" onConfirm={() => void deleteNote()} />
+          <>
+            <button
+              type="button"
+              onClick={() => void togglePin()}
+              title={pinned ? "Unpin from the sidebar" : "Pin to the top of the sidebar"}
+              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors hover:bg-hover ${
+                pinned ? "text-ink" : "text-ink-muted hover:text-ink"
+              }`}
+            >
+              <PinIcon className="h-3.5 w-3.5" />
+              {pinned ? "Pinned" : "Pin"}
+            </button>
+            <ConfirmButton label="Delete" confirmLabel="Confirm" onConfirm={() => void deleteNote()} />
+          </>
         )}
       </header>
 
