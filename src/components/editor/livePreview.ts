@@ -68,6 +68,18 @@ class BulletWidget extends WidgetType {
   }
 }
 
+/**
+ * Whether the selection overlaps [from, to], counting the endpoints.
+ *
+ * Inclusive endpoints are what make this feel like Obsidian: a cursor resting
+ * immediately after `**bold**` still counts as inside it, so the markers stay
+ * visible while you're finishing the word. Type one more character — a space —
+ * and the cursor clears the range and the text formats.
+ */
+function touches(state: EditorState, from: number, to: number): boolean {
+  return state.selection.ranges.some((range) => range.from <= to && range.to >= from);
+}
+
 /** Every line touched by a cursor or selection — these render as raw markdown. */
 function activeLines(state: EditorState): Set<number> {
   const lines = new Set<number>();
@@ -181,8 +193,11 @@ function build(view: EditorView) {
 
         // Leaves just the link text: the brackets, parens and URL all hide.
         if (node.name === "LinkMark" || node.name === "URL") {
-          const parent = node.node.parent?.name;
-          if (!isActive && (parent === "Link" || parent === "Image")) hide(node.from, node.to);
+          const parent = node.node.parent;
+          const kind = parent?.name;
+          if (parent && (kind === "Link" || kind === "Image") && !touches(state, parent.from, parent.to)) {
+            hide(node.from, node.to);
+          }
           return;
         }
 
@@ -192,14 +207,19 @@ function build(view: EditorView) {
           return;
         }
 
+        // Inline marks are scoped to their own element rather than the whole
+        // line, so bold on one side of a sentence stays rendered while you edit
+        // italics on the other.
         if (node.name === "EmphasisMark" || node.name === "StrikethroughMark") {
-          if (!isActive) hide(node.from, node.to);
+          const parent = node.node.parent;
+          if (parent && !touches(state, parent.from, parent.to)) hide(node.from, node.to);
           return;
         }
 
         // Only inline code — hiding the fences of a code block would be confusing.
         if (node.name === "CodeMark" && node.node.parent?.name === "InlineCode") {
-          if (!isActive) hide(node.from, node.to);
+          const parent = node.node.parent;
+          if (parent && !touches(state, parent.from, parent.to)) hide(node.from, node.to);
         }
       },
     });
