@@ -8,6 +8,7 @@ import { countWords, deriveTitle } from "@/lib/format";
 import { useNotes, useSidebar } from "./AppShell";
 import { ClientDate } from "./ClientDate";
 import { ConfirmButton } from "./ConfirmButton";
+import { MarkdownEditor, type MarkdownEditorHandle } from "./MarkdownEditor";
 import { PinIcon } from "./PinIcon";
 
 const AUTOSAVE_DELAY = 600;
@@ -35,7 +36,7 @@ export function Editor({
 
   const contentRef = useRef(initialContent);
   const savedRef = useRef(initialContent);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<MarkdownEditorHandle>(null);
 
   const { refresh, updatePreview } = useNotes();
   const { setOpen } = useSidebar();
@@ -153,7 +154,7 @@ export function Editor({
 
   function clearScratchpad() {
     handleChange("");
-    textareaRef.current?.focus();
+    editorRef.current?.focus();
   }
 
   async function togglePin() {
@@ -243,22 +244,15 @@ export function Editor({
             </p>
           )}
 
-          <textarea
-            ref={textareaRef}
-            value={content}
-            onChange={(event) => handleChange(event.target.value)}
-            autoFocus
-            spellCheck
-            placeholder={kind === "scratch" ? "Start typing…" : "Empty note"}
-            /*
-             * The tall bottom padding is deliberate: it lets you keep scrolling
-             * past the last line so the line you're writing never sits pinned
-             * against the bottom edge of the window.
-             */
-            className={`min-h-0 w-full flex-1 resize-none bg-transparent pb-[50vh] text-[15px] leading-7 outline-none placeholder:text-ink-faint ${
-              kind === "saved" ? "pt-3" : "pt-8"
-            }`}
-          />
+          <div className={`min-h-0 flex-1 ${kind === "saved" ? "pt-3" : "pt-8"}`}>
+            <MarkdownEditor
+              ref={editorRef}
+              value={content}
+              onChange={handleChange}
+              autoFocus
+              placeholder={kind === "scratch" ? "Start typing…" : "Empty note"}
+            />
+          </div>
         </div>
 
         {wordCount > 0 && (
