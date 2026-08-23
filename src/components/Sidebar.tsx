@@ -403,17 +403,22 @@ function NoteRow({
     note.title ??
     (isJournal && note.journalDate ? journalLabel(note.journalDate) : deriveTitle(note.preview));
 
+  /*
+   * Only journal entries carry a date, and only once they've been renamed —
+   * otherwise the date is already the title and repeating it says nothing.
+   * Regular notes show their opening lines and nothing else.
+   */
+  const dated = isJournal && note.journalDate !== null && note.title !== null;
+
   // Kept identical between the row and its rename state so nothing shifts.
-  const subtitle = (
-    <span className="mt-0.5 block truncate text-[12px] text-ink-faint">
-      {isJournal && note.journalDate && note.title ? (
-        <ClientDate iso={note.journalDate} variant="journal" />
-      ) : (
-        <ClientDate iso={note.createdAt} variant="short" />
-      )}
-      {snippet && ` · ${snippet}`}
-    </span>
-  );
+  const subtitle =
+    dated || snippet ? (
+      <span className="mt-0.5 block truncate text-[12px] text-ink-faint">
+        {dated && <ClientDate iso={note.journalDate!} variant="journal" />}
+        {dated && snippet ? " · " : ""}
+        {snippet}
+      </span>
+    ) : null;
 
   if (renaming) {
     return (

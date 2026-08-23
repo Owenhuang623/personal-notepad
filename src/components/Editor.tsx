@@ -20,7 +20,6 @@ export function Editor({
   noteId,
   kind,
   initialContent,
-  createdAt,
   initialPinned,
   title,
   journalDate,
@@ -28,7 +27,6 @@ export function Editor({
   noteId: string;
   kind: "scratch" | "saved" | "daily";
   initialContent: string;
-  createdAt: string;
   initialPinned: boolean;
   title: string | null;
   journalDate: string | null;
@@ -247,17 +245,15 @@ export function Editor({
 
       <div className="relative min-h-0 flex-1">
         <div className="mx-auto flex h-full w-full max-w-[46rem] flex-col px-5 sm:px-8">
-          {kind !== "scratch" && (
+          {/* Only journal entries get a dateline; a regular note is about its
+              contents, not the day it happened to be started. */}
+          {journalDate && (
             <p className="shrink-0 pt-7 text-[12px] text-ink-faint">
-              {journalDate ? (
-                <ClientDate iso={journalDate} variant="journalLong" />
-              ) : (
-                <ClientDate iso={createdAt} variant="long" />
-              )}
+              <ClientDate iso={journalDate} variant="journalLong" />
             </p>
           )}
 
-          <div className={`min-h-0 flex-1 ${kind === "scratch" ? "pt-8" : "pt-3"}`}>
+          <div className={`min-h-0 flex-1 ${journalDate ? "pt-3" : "pt-8"}`}>
             <MarkdownEditor
               ref={editorRef}
               value={content}

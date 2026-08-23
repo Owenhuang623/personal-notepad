@@ -61,17 +61,15 @@ function fromDateKey(key: string): Date {
   return new Date(year, month - 1, day);
 }
 
-/** "Today", "Yesterday", or "Wed, Aug 21". */
+/**
+ * A journal entry's name: "Aug 23", or "Aug 23, 2025" once the year differs.
+ *
+ * Deliberately absolute rather than "Today"/"Yesterday" — a title that changes
+ * overnight isn't a title, and these are what the entries are called.
+ */
 export function journalLabel(key: string): string {
-  if (key === localDateKey()) return "Today";
-
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  if (key === localDateKey(yesterday)) return "Yesterday";
-
   const date = fromDateKey(key);
   return date.toLocaleDateString(undefined, {
-    weekday: "short",
     month: "short",
     day: "numeric",
     year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
