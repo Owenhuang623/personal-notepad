@@ -15,6 +15,7 @@ export type NoteSummary = {
   preview: string;
   journalDate: string | null;
   pinnedAt: string | null;
+  deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -39,6 +40,7 @@ export async function listSavedNotes(): Promise<NoteSummary[]> {
       preview: sql<string>`substring(${notes.content} from 1 for 200)`,
       journalDate: notes.journalDate,
       pinnedAt: notes.pinnedAt,
+      deletedAt: notes.deletedAt,
       createdAt: notes.createdAt,
       updatedAt: notes.updatedAt,
     })
@@ -48,6 +50,7 @@ export async function listSavedNotes(): Promise<NoteSummary[]> {
     // Pinned first (nulls sort last), most recently pinned at the top of that
     // group; everything else falls back to most recently edited.
     .orderBy(
+      sql`${notes.deletedAt} is not null`,
       sql`${notes.pinnedAt} is null`,
       desc(notes.pinnedAt),
       sql`${notes.journalDate} desc nulls last`,
@@ -57,6 +60,7 @@ export async function listSavedNotes(): Promise<NoteSummary[]> {
   return rows.map((row) => ({
     ...row,
     pinnedAt: row.pinnedAt?.toISOString() ?? null,
+    deletedAt: row.deletedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   }));

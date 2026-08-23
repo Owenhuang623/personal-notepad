@@ -12,6 +12,7 @@ export type NoteSummary = {
   preview: string;
   journalDate: string | null;
   pinnedAt: string | null;
+  deletedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };

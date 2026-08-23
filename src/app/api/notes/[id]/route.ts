@@ -1,4 +1,4 @@
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, ne } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { getDb } from "@/db";
@@ -41,6 +41,7 @@ export async function PATCH(request: Request, { params }: Params) {
     content?: string;
     updatedAt?: Date;
     pinnedAt?: Date | null;
+    deletedAt?: Date | null;
     title?: string | null;
     kind?: "saved" | "daily";
     journalDate?: string | null;
@@ -61,6 +62,10 @@ export async function PATCH(request: Request, { params }: Params) {
     // An empty name isn't a name — fall back to deriving it from the first line.
     const trimmed = typeof body.title === "string" ? body.title.trim() : "";
     updates.title = trimmed === "" ? null : trimmed;
+  }
+
+  if (body?.restore === true) {
+    updates.deletedAt = null;
   }
 
   if (body?.move === "journal") {
@@ -99,16 +104,39 @@ export async function PATCH(request: Request, { params }: Params) {
   }
 }
 
-export async function DELETE(_request: Request, { params }: Params) {
+export async function DELETE(request: Request, { params }: Params) {
   const { id } = await params;
+  const permanent = new URL(request.url).searchParams.get("permanent") === "1";
+  const db = getDb();
 
-  // Anything but the scratchpad, which can only ever be cleared.
-  const [deleted] = await getDb()
+  if (!permanent) {
+    // Anything but the scratchpad, which can only ever be cleared.
+    const [deleted] = await db
+      .update(notes)
+      .set({ deletedAt: new Date() })
+      .where(and(eq(notes.id, id), ne(notes.kind, "scratch"), isNull(notes.deletedAt)))
+      .returning({ id: notes.id });
+
+    if (!deleted) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({ ok: true, permanent: false });
+  }
+
+  /*
+   * Permanent removal is deliberately only reachable for rows already in the
+   * trash. A single stray DELETE can therefore never destroy a live note — it
+   * can only move it somewhere recoverable.
+   */
+  const [purged] = await db
     .delete(notes)
-    .where(and(eq(notes.id, id), ne(notes.kind, "scratch")))
+    .where(and(eq(notes.id, id), ne(notes.kind, "scratch"), isNotNull(notes.deletedAt)))
     .returning({ id: notes.id });
 
-  if (!deleted) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!purged) {
+    return NextResponse.json(
+      { error: "Only notes already in the trash can be permanently deleted" },
+      { status: 409 },
+    );
+  }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, permanent: true });
 }

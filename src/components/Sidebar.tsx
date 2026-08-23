@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { deriveSnippet, deriveTitle, localDateKey } from "@/lib/format";
+import { deriveSnippet, deriveTitle, journalLabel, localDateKey } from "@/lib/format";
 
 import { useNotes, useSidebar, type NoteSummary } from "./AppShell";
 import { ClientDate } from "./ClientDate";
@@ -13,7 +13,7 @@ import { Logo } from "./Logo";
 import { PinIcon } from "./PinIcon";
 
 const COLLAPSE_KEY = "np:collapsed";
-type SectionId = "pinned" | "journal" | "notes";
+type SectionId = "pinned" | "journal" | "notes" | "trash";
 
 type MenuState = { note: NoteSummary; x: number; y: number };
 
@@ -28,6 +28,8 @@ export function Sidebar() {
     pinned: false,
     journal: false,
     notes: false,
+    // Trash stays out of the way until you go looking for it.
+    trash: true,
   });
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
@@ -54,9 +56,11 @@ export function Sidebar() {
     return () => clearTimeout(timer);
   }, [error]);
 
-  const pinned = notes.filter((note) => note.pinnedAt !== null);
-  const journal = notes.filter((note) => note.pinnedAt === null && note.kind === "daily");
-  const plain = notes.filter((note) => note.pinnedAt === null && note.kind === "saved");
+  const live = notes.filter((note) => note.deletedAt === null);
+  const pinned = live.filter((note) => note.pinnedAt !== null);
+  const journal = live.filter((note) => note.pinnedAt === null && note.kind === "daily");
+  const plain = live.filter((note) => note.pinnedAt === null && note.kind === "saved");
+  const trashed = notes.filter((note) => note.deletedAt !== null);
 
   async function createNote() {
     if (busy) return;
@@ -112,9 +116,22 @@ export function Sidebar() {
     return true;
   }
 
+  /** Moves a note to the trash. Nothing is destroyed until it's purged from there. */
   async function deleteNote(note: NoteSummary) {
     const response = await fetch(`/api/notes/${note.id}`, { method: "DELETE" });
     if (!response.ok) return;
+
+    await refresh();
+    if (pathname === `/n/${note.id}`) router.push("/");
+  }
+
+  async function purgeNote(note: NoteSummary) {
+    const response = await fetch(`/api/notes/${note.id}?permanent=1`, { method: "DELETE" });
+    if (!response.ok) {
+      const data = (await response.json().catch(() => null)) as { error?: string } | null;
+      setError(data?.error ?? "Could not delete");
+      return;
+    }
 
     window.localStorage.removeItem(`np:draft:${note.id}`);
     await refresh();
@@ -124,6 +141,13 @@ export function Sidebar() {
   function menuItems(note: NoteSummary): MenuItem[] {
     const isPinned = note.pinnedAt !== null;
     const isJournal = note.kind === "daily";
+
+    if (note.deletedAt !== null) {
+      return [
+        { label: "Restore", onSelect: () => void patchNote(note.id, { restore: true }) },
+        { label: "Delete permanently", danger: true, onSelect: () => void purgeNote(note) },
+      ];
+    }
 
     return [
       { label: "Rename", onSelect: () => setRenaming(note.id) },
@@ -152,10 +176,7 @@ export function Sidebar() {
     router,
     renaming,
     setRenaming,
-    onContextMenu: (note: NoteSummary, event: React.MouseEvent) => {
-      event.preventDefault();
-      setMenu({ note, x: event.clientX, y: event.clientY });
-    },
+    openMenu: (note: NoteSummary, x: number, y: number) => setMenu({ note, x, y }),
     onRename: (id: string, title: string) => void patchNote(id, { title }),
   };
 
@@ -229,6 +250,17 @@ export function Sidebar() {
           empty="Nothing saved yet."
           {...sectionProps}
         />
+
+        {trashed.length > 0 && (
+          <Section
+            id="trash"
+            label={`Trash (${trashed.length})`}
+            notes={trashed}
+            collapsed={collapsed.trash}
+            onToggle={toggleSection}
+            {...sectionProps}
+          />
+        )}
       </nav>
 
       {error && (
@@ -275,7 +307,7 @@ type SectionProps = {
   router: ReturnType<typeof useRouter>;
   renaming: string | null;
   setRenaming: (id: string | null) => void;
-  onContextMenu: (note: NoteSummary, event: React.MouseEvent) => void;
+  openMenu: (note: NoteSummary, x: number, y: number) => void;
   onRename: (id: string, title: string) => void;
 };
 
@@ -291,7 +323,7 @@ function Section({
   router,
   renaming,
   setRenaming,
-  onContextMenu,
+  openMenu,
   onRename,
 }: SectionProps) {
   return (
@@ -333,7 +365,7 @@ function Section({
                     router={router}
                     renaming={renaming === note.id}
                     setRenaming={setRenaming}
-                    onContextMenu={onContextMenu}
+                    openMenu={openMenu}
                     onRename={onRename}
                   />
                 </li>
@@ -352,7 +384,7 @@ function NoteRow({
   router,
   renaming,
   setRenaming,
-  onContextMenu,
+  openMenu,
   onRename,
 }: {
   note: NoteSummary;
@@ -360,76 +392,143 @@ function NoteRow({
   router: ReturnType<typeof useRouter>;
   renaming: boolean;
   setRenaming: (id: string | null) => void;
-  onContextMenu: (note: NoteSummary, event: React.MouseEvent) => void;
+  openMenu: (note: NoteSummary, x: number, y: number) => void;
   onRename: (id: string, title: string) => void;
 }) {
   const href = `/n/${note.id}`;
   const snippet = deriveSnippet(note.preview);
   const isJournal = note.kind === "daily";
 
+  const displayTitle =
+    note.title ??
+    (isJournal && note.journalDate ? journalLabel(note.journalDate) : deriveTitle(note.preview));
+
+  // Kept identical between the row and its rename state so nothing shifts.
+  const subtitle = (
+    <span className="mt-0.5 block truncate text-[12px] text-ink-faint">
+      {isJournal && note.journalDate && note.title ? (
+        <ClientDate iso={note.journalDate} variant="journal" />
+      ) : (
+        <ClientDate iso={note.createdAt} variant="short" />
+      )}
+      {snippet && ` · ${snippet}`}
+    </span>
+  );
+
   if (renaming) {
     return (
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          const input = event.currentTarget.elements.namedItem("title") as HTMLInputElement;
-          onRename(note.id, input.value);
-          setRenaming(null);
-        }}
-        className="px-1 py-1"
-      >
-        <input
-          name="title"
-          autoFocus
-          defaultValue={note.title ?? deriveTitle(note.preview)}
-          onBlur={(event) => {
-            onRename(note.id, event.currentTarget.value);
+      <div className="rounded-lg bg-active px-2.5 py-2 ring-1 ring-line-strong">
+        <RenameInput
+          initial={displayTitle}
+          onCommit={(value) => {
+            onRename(note.id, value);
             setRenaming(null);
           }}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") setRenaming(null);
-          }}
-          className="w-full rounded-md border border-line-strong bg-canvas px-1.5 py-1 text-[13.5px] outline-none"
+          onCancel={() => setRenaming(null)}
         />
-      </form>
+        {subtitle}
+      </div>
     );
   }
 
   return (
-    <Link
-      href={href}
-      onContextMenu={(event) => onContextMenu(note, event)}
-      /*
-       * Dynamic routes aren't prefetched by <Link> automatically, so warm the
-       * payload on intent — by the time the click lands the note is usually
-       * already in the router cache.
-       */
-      onMouseEnter={() => router.prefetch(href)}
-      onTouchStart={() => router.prefetch(href)}
-      className={`block rounded-lg px-2.5 py-2 transition-colors ${
-        active ? "bg-active" : "hover:bg-hover"
-      }`}
-    >
-      <span className="flex items-center gap-1.5">
-        {note.pinnedAt && <PinIcon className="h-3 w-3 shrink-0 text-ink-faint" />}
-        <span className="truncate text-[13.5px]">
-          {note.title ??
-            (isJournal && note.journalDate ? (
-              <ClientDate iso={note.journalDate} variant="journal" />
-            ) : (
-              deriveTitle(note.preview)
-            ))}
+    <div className="group relative">
+      <Link
+        href={href}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          openMenu(note, event.clientX, event.clientY);
+        }}
+        /*
+         * Dynamic routes aren't prefetched by <Link> automatically, so warm the
+         * payload on intent — by the time the click lands the note is usually
+         * already in the router cache.
+         */
+        onMouseEnter={() => router.prefetch(href)}
+        onTouchStart={() => router.prefetch(href)}
+        className={`block rounded-lg py-2 pr-8 pl-2.5 transition-colors ${
+          active ? "bg-active" : "hover:bg-hover"
+        } ${note.deletedAt ? "opacity-55" : ""}`}
+      >
+        <span className="flex items-center gap-1.5">
+          {note.pinnedAt && <PinIcon className="h-3 w-3 shrink-0 text-ink-faint" />}
+          <span className="truncate text-[13.5px]">{displayTitle}</span>
         </span>
-      </span>
-      <span className="mt-0.5 block truncate text-[12px] text-ink-faint">
-        {isJournal && note.journalDate && note.title ? (
-          <ClientDate iso={note.journalDate} variant="journal" />
-        ) : (
-          <ClientDate iso={note.createdAt} variant="short" />
-        )}
-        {snippet && ` · ${snippet}`}
-      </span>
-    </Link>
+        {subtitle}
+      </Link>
+
+      {/*
+       * Touch devices have no right-click, so the menu needs a visible handle.
+       * It stays out of the way on pointer devices until the row is hovered.
+       */}
+      <button
+        type="button"
+        aria-label={`Actions for ${displayTitle}`}
+        onClick={(event) => {
+          event.preventDefault();
+          const rect = event.currentTarget.getBoundingClientRect();
+          openMenu(note, rect.left, rect.bottom + 4);
+        }}
+        className="absolute top-1.5 right-1 rounded-md p-1 text-ink-faint transition-opacity hover:bg-hover hover:text-ink focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100"
+      >
+        <DotsIcon />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Commits on Enter or blur, cancels on Escape.
+ *
+ * The settled flag matters: without it the blur that follows Enter or Escape
+ * fires a second time, which made Escape save the edit it was meant to discard.
+ */
+function RenameInput({
+  initial,
+  onCommit,
+  onCancel,
+}: {
+  initial: string;
+  onCommit: (value: string) => void;
+  onCancel: () => void;
+}) {
+  const settled = useRef(false);
+
+  function finish(value: string | null) {
+    if (settled.current) return;
+    settled.current = true;
+    if (value === null) onCancel();
+    else onCommit(value);
+  }
+
+  return (
+    <input
+      autoFocus
+      defaultValue={initial}
+      aria-label="Note name"
+      onFocus={(event) => event.currentTarget.select()}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          finish(event.currentTarget.value);
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          finish(null);
+        }
+      }}
+      onBlur={(event) => finish(event.currentTarget.value)}
+      className="w-full bg-transparent text-[13.5px] text-ink outline-none"
+    />
+  );
+}
+
+function DotsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor" aria-hidden="true">
+      <circle cx="4" cy="8" r="1.35" />
+      <circle cx="8" cy="8" r="1.35" />
+      <circle cx="12" cy="8" r="1.35" />
+    </svg>
   );
 }
 

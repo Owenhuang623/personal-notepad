@@ -39,19 +39,29 @@ export function ContextMenu({
   }, [x, y]);
 
   useEffect(() => {
+    /*
+     * Clicks *inside* the menu must be ignored here. This listener runs on
+     * mousedown in the capture phase, so closing unconditionally would unmount
+     * the menu before the click reached the item — every action silently did
+     * nothing.
+     */
+    const onPointerDown = (event: MouseEvent) => {
+      if (menu.current?.contains(event.target as Node)) return;
+      onClose();
+    };
+
     const close = () => onClose();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
 
-    // `capture` so the menu closes before the click reaches anything underneath.
-    document.addEventListener("mousedown", close, true);
+    document.addEventListener("mousedown", onPointerDown, true);
     document.addEventListener("scroll", close, true);
     window.addEventListener("resize", close);
     document.addEventListener("keydown", onKey);
 
     return () => {
-      document.removeEventListener("mousedown", close, true);
+      document.removeEventListener("mousedown", onPointerDown, true);
       document.removeEventListener("scroll", close, true);
       window.removeEventListener("resize", close);
       document.removeEventListener("keydown", onKey);

@@ -26,6 +26,12 @@ export const notes = pgTable(
     journalDate: date("journal_date", { mode: "string" }),
     /** Null means unpinned. Storing the moment rather than a flag lets pinned notes keep their own order. */
     pinnedAt: timestamp("pinned_at", { withTimezone: true }),
+    /**
+     * Soft delete. Deleting a note sets this rather than removing the row, so a
+     * mistaken delete — by a misclick or by a stray query — is recoverable.
+     * Permanent removal is only permitted on rows that already have it set.
+     */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
