@@ -2,12 +2,21 @@
 
 import { useEffect, useState } from "react";
 
-import { formatLongDate, formatShortDate, relativeTime } from "@/lib/format";
+import {
+  formatLongDate,
+  formatShortDate,
+  journalLabel,
+  journalLongLabel,
+  relativeTime,
+} from "@/lib/format";
 
 const formatters = {
   short: formatShortDate,
   long: formatLongDate,
   relative: relativeTime,
+  // These take a YYYY-MM-DD key rather than an ISO timestamp.
+  journal: journalLabel,
+  journalLong: journalLongLabel,
 };
 
 /**

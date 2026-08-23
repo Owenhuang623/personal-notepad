@@ -48,6 +48,46 @@ export function formatLongDate(iso: string): string {
   });
 }
 
+/** YYYY-MM-DD in the viewer's own timezone — never derive this on the server. */
+export function localDateKey(date: Date = new Date()): string {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/** Parsed as local midnight; `new Date("2026-08-23")` would be read as UTC. */
+function fromDateKey(key: string): Date {
+  const [year, month, day] = key.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+/** "Today", "Yesterday", or "Wed, Aug 21". */
+export function journalLabel(key: string): string {
+  if (key === localDateKey()) return "Today";
+
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (key === localDateKey(yesterday)) return "Yesterday";
+
+  const date = fromDateKey(key);
+  return date.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+  });
+}
+
+/** The dateline above a journal entry: "Wednesday, August 21, 2026". */
+export function journalLongLabel(key: string): string {
+  return fromDateKey(key).toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;

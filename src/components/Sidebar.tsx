@@ -2,29 +2,65 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
-import { deriveSnippet, deriveTitle } from "@/lib/format";
+import { deriveSnippet, deriveTitle, localDateKey } from "@/lib/format";
 
 import { useNotes, useSidebar, type NoteSummary } from "./AppShell";
 import { ClientDate } from "./ClientDate";
+import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { Logo } from "./Logo";
 import { PinIcon } from "./PinIcon";
+
+const COLLAPSE_KEY = "np:collapsed";
+type SectionId = "pinned" | "journal" | "notes";
+
+type MenuState = { note: NoteSummary; x: number; y: number };
 
 export function Sidebar() {
   const { notes, refresh } = useNotes();
   const { open } = useSidebar();
   const pathname = usePathname();
   const router = useRouter();
-  const [creating, setCreating] = useState(false);
 
-  // The query already returns pinned notes first, so these keep their order.
+  const [busy, setBusy] = useState(false);
+  const [collapsed, setCollapsed] = useState<Record<SectionId, boolean>>({
+    pinned: false,
+    journal: false,
+    notes: false,
+  });
+  const [menu, setMenu] = useState<MenuState | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Collapse state is per-device preference, so it lives in localStorage rather
+  // than the database.
+  useEffect(() => {
+    const stored = window.localStorage.getItem(COLLAPSE_KEY);
+    if (stored) setCollapsed((current) => ({ ...current, ...JSON.parse(stored) }));
+  }, []);
+
+  const toggleSection = useCallback((id: SectionId) => {
+    setCollapsed((current) => {
+      const next = { ...current, [id]: !current[id] };
+      window.localStorage.setItem(COLLAPSE_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!error) return;
+    const timer = setTimeout(() => setError(null), 3000);
+    return () => clearTimeout(timer);
+  }, [error]);
+
   const pinned = notes.filter((note) => note.pinnedAt !== null);
-  const unpinned = notes.filter((note) => note.pinnedAt === null);
+  const journal = notes.filter((note) => note.pinnedAt === null && note.kind === "daily");
+  const plain = notes.filter((note) => note.pinnedAt === null && note.kind === "saved");
 
   async function createNote() {
-    if (creating) return;
-    setCreating(true);
+    if (busy) return;
+    setBusy(true);
     try {
       const response = await fetch("/api/notes", {
         method: "POST",
@@ -36,15 +72,92 @@ export function Sidebar() {
       await refresh();
       router.push(`/n/${id}`);
     } finally {
-      setCreating(false);
+      setBusy(false);
     }
   }
 
-  async function signOut() {
-    await fetch("/api/auth", { method: "DELETE" });
-    router.push("/login");
-    router.refresh();
+  /** Opens today's entry, creating it only if today doesn't have one yet. */
+  async function openToday() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const response = await fetch("/api/journal", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ date: localDateKey() }),
+      });
+      if (!response.ok) return;
+      const { id } = (await response.json()) as { id: string };
+      await refresh();
+      router.push(`/n/${id}`);
+    } finally {
+      setBusy(false);
+    }
   }
+
+  async function patchNote(id: string, body: Record<string, unknown>) {
+    const response = await fetch(`/api/notes/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const data = (await response.json().catch(() => null)) as { error?: string } | null;
+      setError(data?.error ?? "Something went wrong");
+      return false;
+    }
+
+    await refresh();
+    return true;
+  }
+
+  async function deleteNote(note: NoteSummary) {
+    const response = await fetch(`/api/notes/${note.id}`, { method: "DELETE" });
+    if (!response.ok) return;
+
+    window.localStorage.removeItem(`np:draft:${note.id}`);
+    await refresh();
+    if (pathname === `/n/${note.id}`) router.push("/");
+  }
+
+  function menuItems(note: NoteSummary): MenuItem[] {
+    const isPinned = note.pinnedAt !== null;
+    const isJournal = note.kind === "daily";
+
+    return [
+      { label: "Rename", onSelect: () => setRenaming(note.id) },
+      {
+        label: isPinned ? "Unpin" : "Pin",
+        onSelect: () => void patchNote(note.id, { pinned: !isPinned }),
+      },
+      {
+        label: isJournal ? "Move to Notes" : "Move to Journal",
+        onSelect: () =>
+          void patchNote(
+            note.id,
+            isJournal
+              ? { move: "notes" }
+              : // File it under the day it was written, which is almost always
+                // what's meant by moving an existing note into the journal.
+                { move: "journal", date: localDateKey(new Date(note.createdAt)) },
+          ),
+      },
+      { label: "Delete", danger: true, onSelect: () => void deleteNote(note) },
+    ];
+  }
+
+  const sectionProps = {
+    pathname,
+    router,
+    renaming,
+    setRenaming,
+    onContextMenu: (note: NoteSummary, event: React.MouseEvent) => {
+      event.preventDefault();
+      setMenu({ note, x: event.clientX, y: event.clientY });
+    },
+    onRename: (id: string, title: string) => void patchNote(id, { title }),
+  };
 
   return (
     <aside
@@ -63,7 +176,7 @@ export function Sidebar() {
         <button
           type="button"
           onClick={createNote}
-          disabled={creating}
+          disabled={busy}
           aria-label="New note"
           title="New note"
           className="rounded-md p-1.5 text-ink-faint transition-colors hover:bg-hover hover:text-ink disabled:opacity-50"
@@ -84,85 +197,252 @@ export function Sidebar() {
         </Link>
       </div>
 
-      <nav className="mt-4 min-h-0 flex-1 overflow-y-auto px-3 pb-3">
-        {notes.length === 0 ? (
-          <p className="px-2.5 py-2 text-[13px] leading-5 text-ink-faint">
-            Nothing saved yet. Save a copy of the scratchpad, or start a new note.
-          </p>
-        ) : (
-          <>
-            {pinned.length > 0 && <NoteSection label="Pinned" notes={pinned} />}
-            {unpinned.length > 0 && (
-              <NoteSection label="Notes" notes={unpinned} spaced={pinned.length > 0} />
-            )}
-          </>
+      <nav className="mt-3 min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+        {pinned.length > 0 && (
+          <Section
+            id="pinned"
+            label="Pinned"
+            notes={pinned}
+            collapsed={collapsed.pinned}
+            onToggle={toggleSection}
+            {...sectionProps}
+          />
         )}
+
+        <Section
+          id="journal"
+          label="Journal"
+          notes={journal}
+          collapsed={collapsed.journal}
+          onToggle={toggleSection}
+          action={{ label: "Today's entry", onSelect: openToday }}
+          empty="No entries yet."
+          {...sectionProps}
+        />
+
+        <Section
+          id="notes"
+          label="Notes"
+          notes={plain}
+          collapsed={collapsed.notes}
+          onToggle={toggleSection}
+          empty="Nothing saved yet."
+          {...sectionProps}
+        />
       </nav>
+
+      {error && (
+        <p className="px-4 pb-1 text-[12px] text-danger" role="status">
+          {error}
+        </p>
+      )}
 
       <div className="border-t border-line px-3 py-2">
         <button
           type="button"
-          onClick={signOut}
+          onClick={async () => {
+            await fetch("/api/auth", { method: "DELETE" });
+            router.push("/login");
+            router.refresh();
+          }}
           className="w-full rounded-lg px-2.5 py-1.5 text-left text-[12.5px] text-ink-faint transition-colors hover:bg-hover hover:text-ink"
         >
           Sign out
         </button>
       </div>
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={menuItems(menu.note)}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </aside>
   );
 }
 
-function NoteSection({
-  label,
-  notes,
-  spaced = false,
-}: {
+type SectionProps = {
+  id: SectionId;
   label: string;
   notes: NoteSummary[];
-  spaced?: boolean;
+  collapsed: boolean;
+  onToggle: (id: SectionId) => void;
+  action?: { label: string; onSelect: () => void };
+  empty?: string;
+  pathname: string;
+  router: ReturnType<typeof useRouter>;
+  renaming: string | null;
+  setRenaming: (id: string | null) => void;
+  onContextMenu: (note: NoteSummary, event: React.MouseEvent) => void;
+  onRename: (id: string, title: string) => void;
+};
+
+function Section({
+  id,
+  label,
+  notes,
+  collapsed,
+  onToggle,
+  action,
+  empty,
+  pathname,
+  router,
+  renaming,
+  setRenaming,
+  onContextMenu,
+  onRename,
+}: SectionProps) {
+  return (
+    <section className="mb-3">
+      <div className="flex items-center gap-0.5">
+        <button
+          type="button"
+          onClick={() => onToggle(id)}
+          aria-expanded={!collapsed}
+          className="flex min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium tracking-[0.07em] text-ink-faint uppercase transition-colors hover:text-ink"
+        >
+          <Chevron collapsed={collapsed} />
+          {label}
+        </button>
+        {action && (
+          <button
+            type="button"
+            onClick={action.onSelect}
+            aria-label={action.label}
+            title={action.label}
+            className="rounded-md p-1 text-ink-faint transition-colors hover:bg-hover hover:text-ink"
+          >
+            <PlusIcon />
+          </button>
+        )}
+      </div>
+
+      {!collapsed && (
+        <>
+          {notes.length === 0 ? (
+            empty && <p className="px-2.5 py-1.5 text-[12.5px] text-ink-faint">{empty}</p>
+          ) : (
+            <ul className="space-y-px">
+              {notes.map((note) => (
+                <li key={note.id}>
+                  <NoteRow
+                    note={note}
+                    active={pathname === `/n/${note.id}`}
+                    router={router}
+                    renaming={renaming === note.id}
+                    setRenaming={setRenaming}
+                    onContextMenu={onContextMenu}
+                    onRename={onRename}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function NoteRow({
+  note,
+  active,
+  router,
+  renaming,
+  setRenaming,
+  onContextMenu,
+  onRename,
+}: {
+  note: NoteSummary;
+  active: boolean;
+  router: ReturnType<typeof useRouter>;
+  renaming: boolean;
+  setRenaming: (id: string | null) => void;
+  onContextMenu: (note: NoteSummary, event: React.MouseEvent) => void;
+  onRename: (id: string, title: string) => void;
 }) {
-  const pathname = usePathname();
-  const router = useRouter();
+  const href = `/n/${note.id}`;
+  const snippet = deriveSnippet(note.preview);
+  const isJournal = note.kind === "daily";
+
+  if (renaming) {
+    return (
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          const input = event.currentTarget.elements.namedItem("title") as HTMLInputElement;
+          onRename(note.id, input.value);
+          setRenaming(null);
+        }}
+        className="px-1 py-1"
+      >
+        <input
+          name="title"
+          autoFocus
+          defaultValue={note.title ?? deriveTitle(note.preview)}
+          onBlur={(event) => {
+            onRename(note.id, event.currentTarget.value);
+            setRenaming(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setRenaming(null);
+          }}
+          className="w-full rounded-md border border-line-strong bg-canvas px-1.5 py-1 text-[13.5px] outline-none"
+        />
+      </form>
+    );
+  }
 
   return (
-    <section className={spaced ? "mt-4" : undefined}>
-      <h2 className="px-2.5 pb-1.5 text-[11px] font-medium tracking-[0.07em] text-ink-faint uppercase">
-        {label}
-      </h2>
-      <ul className="space-y-px">
-        {notes.map((note) => {
-          const href = `/n/${note.id}`;
-          const snippet = deriveSnippet(note.preview);
+    <Link
+      href={href}
+      onContextMenu={(event) => onContextMenu(note, event)}
+      /*
+       * Dynamic routes aren't prefetched by <Link> automatically, so warm the
+       * payload on intent — by the time the click lands the note is usually
+       * already in the router cache.
+       */
+      onMouseEnter={() => router.prefetch(href)}
+      onTouchStart={() => router.prefetch(href)}
+      className={`block rounded-lg px-2.5 py-2 transition-colors ${
+        active ? "bg-active" : "hover:bg-hover"
+      }`}
+    >
+      <span className="flex items-center gap-1.5">
+        {note.pinnedAt && <PinIcon className="h-3 w-3 shrink-0 text-ink-faint" />}
+        <span className="truncate text-[13.5px]">
+          {note.title ??
+            (isJournal && note.journalDate ? (
+              <ClientDate iso={note.journalDate} variant="journal" />
+            ) : (
+              deriveTitle(note.preview)
+            ))}
+        </span>
+      </span>
+      <span className="mt-0.5 block truncate text-[12px] text-ink-faint">
+        {isJournal && note.journalDate && note.title ? (
+          <ClientDate iso={note.journalDate} variant="journal" />
+        ) : (
+          <ClientDate iso={note.createdAt} variant="short" />
+        )}
+        {snippet && ` · ${snippet}`}
+      </span>
+    </Link>
+  );
+}
 
-          return (
-            <li key={note.id}>
-              <Link
-                href={href}
-                /*
-                 * Dynamic routes aren't prefetched by <Link> automatically, so
-                 * warm the payload on intent — by the time the click lands the
-                 * note is usually already in the router cache.
-                 */
-                onMouseEnter={() => router.prefetch(href)}
-                onTouchStart={() => router.prefetch(href)}
-                className={`block rounded-lg px-2.5 py-2 transition-colors ${
-                  pathname === href ? "bg-active" : "hover:bg-hover"
-                }`}
-              >
-                <span className="flex items-center gap-1.5">
-                  {note.pinnedAt && <PinIcon className="h-3 w-3 shrink-0 text-ink-faint" />}
-                  <span className="truncate text-[13.5px]">{deriveTitle(note.preview)}</span>
-                </span>
-                <span className="mt-0.5 block truncate text-[12px] text-ink-faint">
-                  <ClientDate iso={note.createdAt} variant="short" />
-                  {snippet && ` · ${snippet}`}
-                </span>
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-    </section>
+function Chevron({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      className={`h-3 w-3 shrink-0 transition-transform ${collapsed ? "-rotate-90" : ""}`}
+      fill="none"
+      aria-hidden="true"
+    >
+      <path d="M4 6.5 8 10.5l4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
   );
 }
 

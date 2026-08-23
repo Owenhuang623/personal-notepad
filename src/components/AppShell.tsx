@@ -7,7 +7,10 @@ import { Sidebar } from "./Sidebar";
 
 export type NoteSummary = {
   id: string;
+  kind: "scratch" | "saved" | "daily";
+  title: string | null;
   preview: string;
+  journalDate: string | null;
   pinnedAt: string | null;
   createdAt: string;
   updatedAt: string;

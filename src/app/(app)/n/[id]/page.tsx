@@ -12,7 +12,8 @@ export async function generateMetadata({ params }: Props) {
   const { id } = await params;
   const note = await getSavedNote(id);
 
-  return { title: note ? deriveTitle(note.content) : "Note" };
+  if (!note) return { title: "Note" };
+  return { title: note.title ?? (note.journalDate ? `Journal — ${note.journalDate}` : deriveTitle(note.content)) };
 }
 
 export default async function NotePage({ params }: Props) {
@@ -21,5 +22,5 @@ export default async function NotePage({ params }: Props) {
 
   if (!note) notFound();
 
-  return <Editor key={note.id} noteId={note.id} kind="saved" initialContent={note.content} createdAt={note.createdAt} initialPinned={note.pinnedAt !== null} />;
+  return <Editor key={note.id} noteId={note.id} kind="saved" initialContent={note.content} createdAt={note.createdAt} initialPinned={note.pinnedAt !== null} title={note.title} journalDate={note.journalDate} />;
 }

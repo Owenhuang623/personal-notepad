@@ -22,12 +22,16 @@ export function Editor({
   initialContent,
   createdAt,
   initialPinned,
+  title,
+  journalDate,
 }: {
   noteId: string;
-  kind: "scratch" | "saved";
+  kind: "scratch" | "saved" | "daily";
   initialContent: string;
   createdAt: string;
   initialPinned: boolean;
+  title: string | null;
+  journalDate: string | null;
 }) {
   const [content, setContent] = useState(initialContent);
   const [status, setStatus] = useState<Status>("saved");
@@ -149,7 +153,7 @@ export function Editor({
     applyContent(value);
     setStatus("dirty");
     window.localStorage.setItem(draftKey, value);
-    if (kind === "saved") updatePreview(noteId, value);
+    if (kind !== "scratch") updatePreview(noteId, value);
   }
 
   function clearScratchpad() {
@@ -198,7 +202,12 @@ export function Editor({
         </button>
 
         <h1 className="min-w-0 flex-1 truncate text-[13.5px] font-medium">
-          {kind === "scratch" ? "Scratchpad" : deriveTitle(content)}
+          {kind === "scratch" ? (
+            "Scratchpad"
+          ) : (
+            (title ??
+            (journalDate ? <ClientDate iso={journalDate} variant="journal" /> : deriveTitle(content)))
+          )}
         </h1>
 
         <span className="shrink-0 text-[12px] tabular-nums text-ink-faint">
@@ -238,13 +247,17 @@ export function Editor({
 
       <div className="relative min-h-0 flex-1">
         <div className="mx-auto flex h-full w-full max-w-[46rem] flex-col px-5 sm:px-8">
-          {kind === "saved" && (
+          {kind !== "scratch" && (
             <p className="shrink-0 pt-7 text-[12px] text-ink-faint">
-              <ClientDate iso={createdAt} variant="long" />
+              {journalDate ? (
+                <ClientDate iso={journalDate} variant="journalLong" />
+              ) : (
+                <ClientDate iso={createdAt} variant="long" />
+              )}
             </p>
           )}
 
-          <div className={`min-h-0 flex-1 ${kind === "saved" ? "pt-3" : "pt-8"}`}>
+          <div className={`min-h-0 flex-1 ${kind === "scratch" ? "pt-8" : "pt-3"}`}>
             <MarkdownEditor
               ref={editorRef}
               value={content}
