@@ -1,12 +1,18 @@
 import "server-only";
 
-import { and, desc, eq, ne, sql } from "drizzle-orm";
+import { and, desc, eq, notInArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { notes } from "@/db/schema";
+import { notes, SINGLETON_KINDS, type Note } from "@/db/schema";
 
 /** What the sidebar needs: enough of the body to derive a title, nothing more. */
-export type NoteKind = "scratch" | "saved" | "daily";
+export type NoteKind = "scratch" | "saved" | "daily" | "goals";
+
+/** Kinds with exactly one row, each reached by its own route. */
+type SingletonKind = (typeof SINGLETON_KINDS)[number];
+
+/** Everything the sidebar lists — i.e. everything that isn't a singleton. */
+const listable = notInArray(notes.kind, [...SINGLETON_KINDS]);
 
 export type NoteSummary = {
   id: string;
@@ -45,8 +51,8 @@ export async function listSavedNotes(): Promise<NoteSummary[]> {
       updatedAt: notes.updatedAt,
     })
     .from(notes)
-    // Everything but the scratchpad; the sidebar splits these into sections.
-    .where(ne(notes.kind, "scratch"))
+    // Everything but the singletons; the sidebar splits these into sections.
+    .where(listable)
     // Pinned first (nulls sort last), most recently pinned at the top of that
     // group; everything else falls back to most recently edited.
     .orderBy(
@@ -67,56 +73,44 @@ export async function listSavedNotes(): Promise<NoteSummary[]> {
 }
 
 /**
- * The scratchpad is created lazily on first visit so a fresh database needs no
- * seeding. The unique index on `kind` makes the insert race-safe.
+ * Singletons are created lazily on first visit so a fresh database needs no
+ * seeding. The partial unique index on `kind` makes the insert race-safe.
  */
-export async function getScratchNote(): Promise<NoteDetail> {
-  const [existing] = await getDb().select().from(notes).where(eq(notes.kind, "scratch")).limit(1);
-  if (existing) {
-    return {
-      id: existing.id,
-      kind: "scratch",
-      title: existing.title,
-      content: existing.content,
-      journalDate: existing.journalDate,
-      pinnedAt: existing.pinnedAt?.toISOString() ?? null,
-    createdAt: existing.createdAt.toISOString(),
-      updatedAt: existing.updatedAt.toISOString(),
-    };
-  }
+async function getSingletonNote(kind: SingletonKind): Promise<NoteDetail> {
+  const [existing] = await getDb().select().from(notes).where(eq(notes.kind, kind)).limit(1);
+  if (existing) return toDetail(existing);
 
   const [created] = await getDb()
     .insert(notes)
-    .values({ kind: "scratch", content: "" })
+    .values({ kind, content: "" })
     .onConflictDoNothing()
     .returning();
 
-  if (created) {
-    return {
-      id: created.id,
-      kind: "scratch",
-      title: created.title,
-      content: created.content,
-      journalDate: created.journalDate,
-      pinnedAt: created.pinnedAt?.toISOString() ?? null,
-    createdAt: created.createdAt.toISOString(),
-      updatedAt: created.updatedAt.toISOString(),
-    };
-  }
+  // No row back means another request won the insert race — read theirs.
+  return created ? toDetail(created) : getSingletonNote(kind);
+}
 
-  // Another request won the insert race — read theirs.
-  return getScratchNote();
+export function getScratchNote(): Promise<NoteDetail> {
+  return getSingletonNote("scratch");
+}
+
+export function getGoalsNote(): Promise<NoteDetail> {
+  return getSingletonNote("goals");
 }
 
 export async function getSavedNote(id: string): Promise<NoteDetail | null> {
   const [row] = await getDb()
     .select()
     .from(notes)
-    .where(and(eq(notes.id, id), ne(notes.kind, "scratch")))
+    // Singletons live at their own routes; /n/<id> must not become a second way
+    // in, where they would be shown a Delete button that can't apply to them.
+    .where(and(eq(notes.id, id), listable))
     .limit(1);
 
-  if (!row) return null;
+  return row ? toDetail(row) : null;
+}
 
+function toDetail(row: Note): NoteDetail {
   return {
     id: row.id,
     kind: row.kind,

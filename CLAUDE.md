@@ -48,6 +48,11 @@ was the user's pinned note, and it was destroyed.
 
 - Notes are plain markdown text in `content`. Never migrate to a structured
   document model — portability is the point.
+- `scratch` and `goals` are singletons (`SINGLETON_KINDS` in `db/schema.ts`),
+  each with a partial unique index on `kind` and its own route. Only their
+  `content` is mutable: renaming, pinning, moving or deleting one is rejected,
+  because its route would then lazily create a fresh empty row and strand the
+  writing behind it. They are excluded from the sidebar list and from `/n/:id`.
 - `title` is optional; when null the title derives from the first non-empty line.
 - Dates that represent a *day* (journal entries) are computed in the browser.
   The server runs in UTC and would misfile anything written late in the evening.

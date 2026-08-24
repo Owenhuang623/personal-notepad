@@ -11,6 +11,13 @@ import { ConfirmButton } from "./ConfirmButton";
 import { MarkdownEditor, type MarkdownEditorHandle } from "./MarkdownEditor";
 import { PinIcon } from "./PinIcon";
 
+const PLACEHOLDERS = {
+  scratch: "Start typing…",
+  goals: "What are you working toward?",
+  saved: "Empty note",
+  daily: "What's on your mind?",
+} as const;
+
 const AUTOSAVE_DELAY = 600;
 const RETRY_DELAY = 5000;
 
@@ -25,7 +32,7 @@ export function Editor({
   journalDate,
 }: {
   noteId: string;
-  kind: "scratch" | "saved" | "daily";
+  kind: "scratch" | "saved" | "daily" | "goals";
   initialContent: string;
   initialPinned: boolean;
   title: string | null;
@@ -46,6 +53,10 @@ export function Editor({
 
   const draftKey = `np:draft:${noteId}`;
   const wordCount = countWords(content);
+
+  // The scratchpad and the goals note are fixtures of the app rather than
+  // entries in the list: they can't be pinned, moved or deleted.
+  const singleton = kind === "scratch" || kind === "goals";
 
   const applyContent = useCallback((value: string) => {
     contentRef.current = value;
@@ -139,22 +150,22 @@ export function Editor({
     function handleKeydown(event: KeyboardEvent) {
       if (!(event.metaKey || event.ctrlKey) || event.key !== "s") return;
       event.preventDefault();
-      if (kind === "scratch") void saveCopy();
+      if (singleton) void saveCopy();
       else void flush();
     }
 
     window.addEventListener("keydown", handleKeydown);
     return () => window.removeEventListener("keydown", handleKeydown);
-  }, [kind, saveCopy, flush]);
+  }, [singleton, saveCopy, flush]);
 
   function handleChange(value: string) {
     applyContent(value);
     setStatus("dirty");
     window.localStorage.setItem(draftKey, value);
-    if (kind !== "scratch") updatePreview(noteId, value);
+    if (!singleton) updatePreview(noteId, value);
   }
 
-  function clearScratchpad() {
+  function clearPad() {
     handleChange("");
     editorRef.current?.focus();
   }
@@ -202,6 +213,8 @@ export function Editor({
         <h1 className="min-w-0 flex-1 truncate text-[13.5px] font-medium">
           {kind === "scratch" ? (
             "Scratchpad"
+          ) : kind === "goals" ? (
+            "Goals"
           ) : (
             (title ??
             (journalDate ? <ClientDate iso={journalDate} variant="journal" /> : deriveTitle(content)))
@@ -212,7 +225,7 @@ export function Editor({
           {flash ?? statusLabel(status)}
         </span>
 
-        {kind === "scratch" ? (
+        {singleton ? (
           <>
             <button
               type="button"
@@ -223,7 +236,10 @@ export function Editor({
             >
               Save a copy
             </button>
-            <ConfirmButton label="Clear" confirmLabel="Confirm" onConfirm={clearScratchpad} />
+            {/* Only the scratchpad is meant to be emptied; goals accumulate. */}
+            {kind === "scratch" && (
+              <ConfirmButton label="Clear" confirmLabel="Confirm" onConfirm={clearPad} />
+            )}
           </>
         ) : (
           <>
@@ -259,7 +275,7 @@ export function Editor({
               value={content}
               onChange={handleChange}
               autoFocus
-              placeholder={kind === "scratch" ? "Start typing…" : "Empty note"}
+              placeholder={PLACEHOLDERS[kind]}
             />
           </div>
         </div>

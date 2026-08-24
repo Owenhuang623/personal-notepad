@@ -205,16 +205,14 @@ export function Sidebar() {
         </button>
       </div>
 
-      <div className="px-3 pt-1">
-        <Link
-          href="/"
-          className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] transition-colors ${
-            pathname === "/" ? "bg-active text-ink" : "text-ink-muted hover:bg-hover hover:text-ink"
-          }`}
-        >
+      {/* The two fixtures: always here, always exactly one of each. */}
+      <div className="space-y-px px-3 pt-1">
+        <FixedLink href="/" label="Scratchpad" active={pathname === "/"}>
           <PinIcon className="h-3.5 w-3.5" />
-          Scratchpad
-        </Link>
+        </FixedLink>
+        <FixedLink href="/goals" label="Goals" active={pathname === "/goals"}>
+          <TargetIcon />
+        </FixedLink>
       </div>
 
       <nav className="mt-3 min-h-0 flex-1 overflow-y-auto px-3 pb-3">
@@ -291,6 +289,30 @@ export function Sidebar() {
         />
       )}
     </aside>
+  );
+}
+
+function FixedLink({
+  href,
+  label,
+  active,
+  children,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13.5px] transition-colors ${
+        active ? "bg-active text-ink" : "text-ink-muted hover:bg-hover hover:text-ink"
+      }`}
+    >
+      {children}
+      {label}
+    </Link>
   );
 }
 
@@ -525,6 +547,15 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
       aria-hidden="true"
     >
       <path d="M4 6.5 8 10.5l4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function TargetIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
+      <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="8" cy="8" r="1.6" fill="currentColor" />
     </svg>
   );
 }

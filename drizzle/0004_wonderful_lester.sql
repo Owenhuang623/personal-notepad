@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "notes_one_goals" ON "notes" USING btree ("kind") WHERE "notes"."kind" = 'goals';

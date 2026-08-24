@@ -2,17 +2,19 @@ import { sql } from "drizzle-orm";
 import { date, index, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 
 /**
- * One table for both kinds of note.
+ * One table for every kind of note.
  *
- * `scratch` is the singleton notepad that opens by default — there is exactly
- * one row with this kind, enforced by the partial unique index below.
- * `saved` rows are the copies that show up in the sidebar.
+ * `scratch` and `goals` are singletons: exactly one row of each, enforced by the
+ * partial unique indexes below, reached by their own route rather than through
+ * the sidebar list. `saved` and `daily` rows are the ones the sidebar lists.
  */
+export const SINGLETON_KINDS = ["scratch", "goals"] as const;
+
 export const notes = pgTable(
   "notes",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    kind: text("kind", { enum: ["scratch", "saved", "daily"] })
+    kind: text("kind", { enum: ["scratch", "saved", "daily", "goals"] })
       .notNull()
       .default("saved"),
     content: text("content").notNull().default(""),
@@ -39,6 +41,9 @@ export const notes = pgTable(
     uniqueIndex("notes_one_scratch")
       .on(table.kind)
       .where(sql`${table.kind} = 'scratch'`),
+    uniqueIndex("notes_one_goals")
+      .on(table.kind)
+      .where(sql`${table.kind} = 'goals'`),
     index("notes_saved_updated_at").on(table.kind, table.updatedAt.desc()),
     uniqueIndex("notes_one_per_day")
       .on(table.journalDate)

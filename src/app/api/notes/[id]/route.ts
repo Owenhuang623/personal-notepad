@@ -1,10 +1,13 @@
-import { and, eq, isNotNull, isNull, ne } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, notInArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { getDb } from "@/db";
-import { notes } from "@/db/schema";
+import { notes, SINGLETON_KINDS } from "@/db/schema";
 
 type Params = { params: Promise<{ id: string }> };
+
+/** The scratchpad and goals note. Their text is editable; nothing else about them is. */
+const notSingleton = notInArray(notes.kind, [...SINGLETON_KINDS]);
 
 /**
  * Drizzle wraps driver errors in a "Failed query" Error, so the constraint name
@@ -83,11 +86,23 @@ export async function PATCH(request: Request, { params }: Params) {
     return NextResponse.json({ error: "nothing to update" }, { status: 400 });
   }
 
+  /*
+   * Editing the text of a singleton is fine; everything else about it is fixed.
+   * Renaming one would go nowhere — its heading is the section name — and
+   * pinning, moving or trashing it would leave its route to lazily create a
+   * fresh empty row, stranding the writing behind it somewhere unexpected.
+   */
+  const structural =
+    updates.kind !== undefined ||
+    updates.pinnedAt !== undefined ||
+    updates.deletedAt !== undefined ||
+    updates.title !== undefined;
+
   try {
     const [updated] = await getDb()
       .update(notes)
       .set(updates)
-      .where(eq(notes.id, id))
+      .where(structural ? and(eq(notes.id, id), notSingleton) : eq(notes.id, id))
       .returning({ id: notes.id, updatedAt: notes.updatedAt });
 
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -110,11 +125,11 @@ export async function DELETE(request: Request, { params }: Params) {
   const db = getDb();
 
   if (!permanent) {
-    // Anything but the scratchpad, which can only ever be cleared.
+    // Anything but a singleton, which can only ever be cleared.
     const [deleted] = await db
       .update(notes)
       .set({ deletedAt: new Date() })
-      .where(and(eq(notes.id, id), ne(notes.kind, "scratch"), isNull(notes.deletedAt)))
+      .where(and(eq(notes.id, id), notSingleton, isNull(notes.deletedAt)))
       .returning({ id: notes.id });
 
     if (!deleted) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -128,7 +143,7 @@ export async function DELETE(request: Request, { params }: Params) {
    */
   const [purged] = await db
     .delete(notes)
-    .where(and(eq(notes.id, id), ne(notes.kind, "scratch"), isNotNull(notes.deletedAt)))
+    .where(and(eq(notes.id, id), notSingleton, isNotNull(notes.deletedAt)))
     .returning({ id: notes.id });
 
   if (!purged) {
