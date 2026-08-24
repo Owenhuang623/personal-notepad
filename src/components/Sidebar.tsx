@@ -4,10 +4,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { deriveSnippet, deriveTitle, journalLabel, localDateKey } from "@/lib/format";
+import { deriveTitle, journalLabel, localDateKey } from "@/lib/format";
 
 import { useNotes, useSidebar, type NoteSummary } from "./AppShell";
-import { ClientDate } from "./ClientDate";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { Logo } from "./Logo";
 import { PinIcon } from "./PinIcon";
@@ -396,29 +395,11 @@ function NoteRow({
   onRename: (id: string, title: string) => void;
 }) {
   const href = `/n/${note.id}`;
-  const snippet = deriveSnippet(note.preview);
   const isJournal = note.kind === "daily";
 
   const displayTitle =
     note.title ??
     (isJournal && note.journalDate ? journalLabel(note.journalDate) : deriveTitle(note.preview));
-
-  /*
-   * Only journal entries carry a date, and only once they've been renamed —
-   * otherwise the date is already the title and repeating it says nothing.
-   * Regular notes show their opening lines and nothing else.
-   */
-  const dated = isJournal && note.journalDate !== null && note.title !== null;
-
-  // Kept identical between the row and its rename state so nothing shifts.
-  const subtitle =
-    dated || snippet ? (
-      <span className="mt-0.5 block truncate text-[12px] text-ink-faint">
-        {dated && <ClientDate iso={note.journalDate!} variant="journal" />}
-        {dated && snippet ? " · " : ""}
-        {snippet}
-      </span>
-    ) : null;
 
   if (renaming) {
     return (
@@ -431,7 +412,6 @@ function NoteRow({
           }}
           onCancel={() => setRenaming(null)}
         />
-        {subtitle}
       </div>
     );
   }
@@ -459,7 +439,6 @@ function NoteRow({
           {note.pinnedAt && <PinIcon className="h-3 w-3 shrink-0 text-ink-faint" />}
           <span className="truncate text-[13.5px]">{displayTitle}</span>
         </span>
-        {subtitle}
       </Link>
 
       {/*
@@ -474,7 +453,7 @@ function NoteRow({
           const rect = event.currentTarget.getBoundingClientRect();
           openMenu(note, rect.left, rect.bottom + 4);
         }}
-        className="absolute top-1.5 right-1 rounded-md p-1 text-ink-faint transition-opacity hover:bg-hover hover:text-ink focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100"
+        className="absolute top-1/2 right-1 -translate-y-1/2 rounded-md p-1 text-ink-faint transition-opacity hover:bg-hover hover:text-ink focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100"
       >
         <DotsIcon />
       </button>

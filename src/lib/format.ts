@@ -9,20 +9,6 @@ export function deriveTitle(content: string): string {
   return line.length > 64 ? `${line.slice(0, 64).trimEnd()}…` : line;
 }
 
-/** The line under the title in the sidebar — the start of the body, minus the title line. */
-export function deriveSnippet(content: string): string {
-  const lines = content.split("\n").map((l) => l.trim());
-  const titleIndex = lines.findIndex(Boolean);
-  if (titleIndex === -1) return "";
-
-  const rest = lines
-    .slice(titleIndex + 1)
-    .filter(Boolean)
-    .join(" ");
-
-  return rest.length > 80 ? `${rest.slice(0, 80).trimEnd()}…` : rest;
-}
-
 export function countWords(text: string): number {
   const trimmed = text.trim();
   return trimmed ? trimmed.split(/\s+/).length : 0;
@@ -61,19 +47,25 @@ function fromDateKey(key: string): Date {
   return new Date(year, month - 1, day);
 }
 
+const MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
 /**
  * A journal entry's name: "Aug 23", or "Aug 23, 2025" once the year differs.
  *
  * Deliberately absolute rather than "Today"/"Yesterday" — a title that changes
  * overnight isn't a title, and these are what the entries are called.
+ *
+ * Formatted by hand rather than through toLocaleDateString because this renders
+ * during SSR: Node and the browser resolve the default locale differently, so
+ * the server would emit one string and hydration would replace it with another.
  */
 export function journalLabel(key: string): string {
-  const date = fromDateKey(key);
-  return date.toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-    year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
-  });
+  const [year, month, day] = key.split("-").map(Number);
+  const suffix = year === new Date().getFullYear() ? "" : `, ${year}`;
+  return `${MONTHS[month - 1]} ${day}${suffix}`;
 }
 
 /** The dateline above a journal entry: "Wednesday, August 21, 2026". */
