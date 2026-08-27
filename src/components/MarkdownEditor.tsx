@@ -4,7 +4,7 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirro
 import { markdown, markdownKeymap, markdownLanguage } from "@codemirror/lang-markdown";
 import { EditorState } from "@codemirror/state";
 import { EditorView, keymap, placeholder as placeholderExtension } from "@codemirror/view";
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { toggleTask } from "./editor/commands";
 import { livePreview } from "./editor/livePreview";
@@ -12,15 +12,24 @@ import { notepadTheme } from "./editor/theme";
 
 export type MarkdownEditorHandle = { focus: () => void };
 
-export const MarkdownEditor = forwardRef<
-  MarkdownEditorHandle,
-  {
-    value: string;
-    onChange: (value: string) => void;
-    placeholder?: string;
-    autoFocus?: boolean;
-  }
->(function MarkdownEditor({ value, onChange, placeholder, autoFocus }, ref) {
+/**
+ * The handle arrives through onReady rather than a ref: this component is
+ * loaded lazily, and a callback passes through a dynamic import unambiguously
+ * where a forwarded ref does not.
+ */
+export function MarkdownEditor({
+  value,
+  onChange,
+  placeholder,
+  autoFocus,
+  onReady,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  autoFocus?: boolean;
+  onReady?: (handle: MarkdownEditorHandle) => void;
+}) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
 
@@ -29,7 +38,8 @@ export const MarkdownEditor = forwardRef<
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
-  useImperativeHandle(ref, () => ({ focus: () => view.current?.focus() }), []);
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
 
   useEffect(() => {
     if (!host.current) return;
@@ -64,6 +74,7 @@ export const MarkdownEditor = forwardRef<
 
     view.current = instance;
     if (autoFocus) instance.focus();
+    onReadyRef.current?.({ focus: () => instance.focus() });
 
     return () => {
       instance.destroy();
@@ -87,4 +98,4 @@ export const MarkdownEditor = forwardRef<
   }, [value]);
 
   return <div ref={host} className="h-full [&_.cm-editor]:h-full" />;
-});
+}

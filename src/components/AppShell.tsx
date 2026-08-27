@@ -26,6 +26,11 @@ type NotesContextValue = {
    * doesn't shuffle under the cursor mid-sentence.
    */
   updatePreview: (id: string, content: string) => void;
+  /**
+   * Shows a just-created note straight away. Waiting on refresh() before
+   * navigating cost a second server round trip on every new note.
+   */
+  addNote: (note: NoteSummary) => void;
 };
 
 type SidebarContextValue = {
@@ -82,9 +87,13 @@ export function AppShell({
     );
   }, []);
 
+  const addNote = useCallback((note: NoteSummary) => {
+    setNotes((current) => (current.some((n) => n.id === note.id) ? current : [note, ...current]));
+  }, []);
+
   const notesValue = useMemo(
-    () => ({ notes, refresh, updatePreview }),
-    [notes, refresh, updatePreview],
+    () => ({ notes, refresh, updatePreview, addNote }),
+    [notes, refresh, updatePreview, addNote],
   );
   const sidebarValue = useMemo(() => ({ open, setOpen }), [open]);
 

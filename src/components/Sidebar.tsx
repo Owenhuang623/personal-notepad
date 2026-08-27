@@ -17,7 +17,7 @@ type SectionId = "pinned" | "journal" | "notes" | "trash";
 type MenuState = { note: NoteSummary; x: number; y: number };
 
 export function Sidebar() {
-  const { notes, refresh } = useNotes();
+  const { notes, refresh, addNote } = useNotes();
   const { open } = useSidebar();
   const pathname = usePathname();
   const router = useRouter();
@@ -61,6 +61,12 @@ export function Sidebar() {
   const plain = live.filter((note) => note.pinnedAt === null && note.kind === "saved");
   const trashed = notes.filter((note) => note.deletedAt !== null);
 
+  /*
+   * Create, show, navigate — in that order, with nothing awaited in between
+   * that the user has to wait on. Re-listing the notes before navigating added
+   * a second round trip to every new note; the row the POST returns is the same
+   * row that list would have contained.
+   */
   async function createNote() {
     if (busy) return;
     setBusy(true);
@@ -71,8 +77,9 @@ export function Sidebar() {
         body: JSON.stringify({ content: "" }),
       });
       if (!response.ok) return;
-      const { id } = (await response.json()) as { id: string };
-      await refresh();
+
+      const { id, note } = (await response.json()) as { id: string; note: NoteSummary };
+      addNote(note);
       router.push(`/n/${id}`);
     } finally {
       setBusy(false);
@@ -90,8 +97,10 @@ export function Sidebar() {
         body: JSON.stringify({ date: localDateKey() }),
       });
       if (!response.ok) return;
-      const { id } = (await response.json()) as { id: string };
-      await refresh();
+
+      const { id, note } = (await response.json()) as { id: string; note?: NoteSummary };
+      // Only a freshly created entry needs adding; an existing one is already listed.
+      if (note) addNote(note);
       router.push(`/n/${id}`);
     } finally {
       setBusy(false);
@@ -144,7 +153,12 @@ export function Sidebar() {
     if (note.deletedAt !== null) {
       return [
         { label: "Restore", onSelect: () => void patchNote(note.id, { restore: true }) },
-        { label: "Delete permanently", danger: true, onSelect: () => void purgeNote(note) },
+        {
+          label: "Delete permanently",
+          danger: true,
+          confirm: true,
+          onSelect: () => void purgeNote(note),
+        },
       ];
     }
 

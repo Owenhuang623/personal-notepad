@@ -11,3 +11,6 @@ build
 next-env.d.ts
 
 .DS_Store
+
+# Backups are your notes in plain text — keep them out of the repo.
+/backups

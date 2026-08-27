@@ -110,6 +110,22 @@ export async function getSavedNote(id: string): Promise<NoteDetail | null> {
   return row ? toDetail(row) : null;
 }
 
+/** The sidebar's view of a row. Used by the create endpoints so a new note can
+ *  be shown without re-listing everything. */
+export function toSummary(row: Note): NoteSummary {
+  return {
+    id: row.id,
+    kind: row.kind,
+    title: row.title,
+    preview: row.content.slice(0, 200),
+    journalDate: row.journalDate,
+    pinnedAt: row.pinnedAt?.toISOString() ?? null,
+    deletedAt: row.deletedAt?.toISOString() ?? null,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
 function toDetail(row: Note): NoteDetail {
   return {
     id: row.id,

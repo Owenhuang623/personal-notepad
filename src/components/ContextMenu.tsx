@@ -6,6 +6,8 @@ export type MenuItem = {
   label: string;
   onSelect: () => void;
   danger?: boolean;
+  /** Arms on the first click and only fires on the second. For anything irreversible. */
+  confirm?: boolean;
 };
 
 /**
@@ -26,6 +28,7 @@ export function ContextMenu({
 }) {
   const menu = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ x, y });
+  const [armed, setArmed] = useState<string | null>(null);
 
   useLayoutEffect(() => {
     const element = menu.current;
@@ -75,22 +78,32 @@ export function ContextMenu({
       style={{ left: position.x, top: position.y }}
       className="fixed z-50 min-w-[168px] overflow-hidden rounded-lg border border-line bg-panel py-1 shadow-lg shadow-black/5"
     >
-      {items.map((item) => (
-        <button
-          key={item.label}
-          type="button"
-          role="menuitem"
-          onClick={() => {
-            onClose();
-            item.onSelect();
-          }}
-          className={`block w-full px-3 py-1.5 text-left text-[13px] transition-colors hover:bg-hover ${
-            item.danger ? "text-danger" : "text-ink"
-          }`}
-        >
-          {item.label}
-        </button>
-      ))}
+      {items.map((item) => {
+        const isArmed = armed === item.label;
+
+        return (
+          <button
+            key={item.label}
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              // An irreversible action sits one click away from a harmless one;
+              // the first click only arms it.
+              if (item.confirm && !isArmed) {
+                setArmed(item.label);
+                return;
+              }
+              onClose();
+              item.onSelect();
+            }}
+            className={`block w-full px-3 py-1.5 text-left text-[13px] transition-colors hover:bg-hover ${
+              item.danger ? "text-danger" : "text-ink"
+            } ${isArmed ? "bg-hover font-medium" : ""}`}
+          >
+            {isArmed ? "Click again to confirm" : item.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

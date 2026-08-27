@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 import { getDb } from "@/db";
 import { notes } from "@/db/schema";
+import { toSummary } from "@/lib/notes";
 
 /**
  * Opens a day's journal entry, creating it if it doesn't exist yet.
@@ -32,9 +33,11 @@ export async function POST(request: Request) {
     .insert(notes)
     .values({ kind: "daily", journalDate: body.date, content: "" })
     .onConflictDoNothing()
-    .returning({ id: notes.id });
+    .returning();
 
-  if (created) return NextResponse.json({ id: created.id, created: true }, { status: 201 });
+  if (created) {
+    return NextResponse.json({ id: created.id, created: true, note: toSummary(created) }, { status: 201 });
+  }
 
   // Lost an insert race — the other request's row is the one to use.
   const [raced] = await db

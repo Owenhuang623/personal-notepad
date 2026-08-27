@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -8,7 +9,17 @@ import { countWords, deriveTitle } from "@/lib/format";
 import { useNotes, useSidebar } from "./AppShell";
 import { ClientDate } from "./ClientDate";
 import { ConfirmButton } from "./ConfirmButton";
-import { MarkdownEditor, type MarkdownEditorHandle } from "./MarkdownEditor";
+import type { MarkdownEditorHandle } from "./MarkdownEditor";
+
+/*
+ * CodeMirror is 180 KB gzipped — over half of all the JavaScript on the page,
+ * and until it had parsed and mounted, the note was invisible. Loading it
+ * separately lets the server-rendered text show first; StaticText below stands
+ * in for the few hundred milliseconds it takes to arrive.
+ */
+const MarkdownEditor = dynamic(() => import("./MarkdownEditor").then((m) => m.MarkdownEditor), {
+  ssr: false,
+});
 import { PinIcon } from "./PinIcon";
 
 const PLACEHOLDERS = {
@@ -45,7 +56,8 @@ export function Editor({
 
   const contentRef = useRef(initialContent);
   const savedRef = useRef(initialContent);
-  const editorRef = useRef<MarkdownEditorHandle>(null);
+  const editorRef = useRef<MarkdownEditorHandle | null>(null);
+  const [editorReady, setEditorReady] = useState(false);
 
   const { refresh, updatePreview } = useNotes();
   const { setOpen } = useSidebar();
@@ -126,18 +138,27 @@ export function Editor({
     };
   }, [flush]);
 
-  const saveCopy = useCallback(async () => {
-    if (!contentRef.current.trim()) return;
+  /**
+   * Returns what happened so callers can react — `clearPad` must not wipe the
+   * page if the copy it was archiving never reached the server.
+   */
+  const saveCopy = useCallback(async (message = "Copy saved"): Promise<"saved" | "empty" | "error"> => {
+    if (!contentRef.current.trim()) return "empty";
 
-    const response = await fetch("/api/notes", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content: contentRef.current }),
-    });
-    if (!response.ok) return;
+    try {
+      const response = await fetch("/api/notes", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: contentRef.current }),
+      });
+      if (!response.ok) return "error";
+    } catch {
+      return "error";
+    }
 
     await refresh();
-    setFlash("Copy saved");
+    setFlash(message);
+    return "saved";
   }, [refresh]);
 
   useEffect(() => {
@@ -165,7 +186,18 @@ export function Editor({
     if (!singleton) updatePreview(noteId, value);
   }
 
-  function clearPad() {
+  /**
+   * Clearing keeps a copy in the sidebar first, so the one destructive action on
+   * the page you use most isn't destructive. If the copy can't be saved, nothing
+   * is cleared — losing the text is the exact outcome this is here to prevent.
+   */
+  async function clearPad() {
+    const archived = await saveCopy("Cleared · copy saved");
+    if (archived === "error") {
+      setFlash("Couldn't save a copy — nothing cleared");
+      return;
+    }
+
     handleChange("");
     editorRef.current?.focus();
   }
@@ -238,7 +270,11 @@ export function Editor({
             </button>
             {/* Only the scratchpad is meant to be emptied; goals accumulate. */}
             {kind === "scratch" && (
-              <ConfirmButton label="Clear" confirmLabel="Confirm" onConfirm={clearPad} />
+              <ConfirmButton
+                label="Clear"
+                confirmLabel="Confirm"
+                onConfirm={() => void clearPad()}
+              />
             )}
           </>
         ) : (
@@ -270,13 +306,23 @@ export function Editor({
           )}
 
           <div className={`min-h-0 flex-1 ${journalDate ? "pt-3" : "pt-8"}`}>
-            <MarkdownEditor
-              ref={editorRef}
-              value={content}
-              onChange={handleChange}
-              autoFocus
-              placeholder={PLACEHOLDERS[kind]}
-            />
+            {/* The stand-in is positioned against this box, not the padded one
+                outside it, so the first line sits exactly where CodeMirror
+                will put it. */}
+            <div className="relative h-full">
+              <MarkdownEditor
+                value={content}
+                onChange={handleChange}
+                autoFocus
+                placeholder={PLACEHOLDERS[kind]}
+                onReady={(handle) => {
+                  editorRef.current = handle;
+                  setEditorReady(true);
+                }}
+              />
+
+              {!editorReady && content && <StaticText text={content} />}
+            </div>
           </div>
         </div>
 
@@ -286,6 +332,22 @@ export function Editor({
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The note as it looks before the editor exists — same font, size and line
+ * height as `.cm-content`, so the text doesn't move when CodeMirror replaces
+ * it. Markdown still reads as markdown here; only the styling is missing.
+ */
+function StaticText({ text }: { text: string }) {
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute inset-0 overflow-hidden font-sans text-[15px] leading-[1.75] whitespace-pre-wrap text-ink"
+    >
+      {text}
     </div>
   );
 }
