@@ -219,13 +219,10 @@ export function Sidebar() {
         </button>
       </div>
 
-      {/* The two fixtures: always here, always exactly one of each. */}
+      {/* The one fixture: the dashboard, always here. */}
       <div className="space-y-px px-3 pt-1">
-        <FixedLink href="/" label="Scratchpad" active={pathname === "/"}>
-          <PinIcon className="h-3.5 w-3.5" />
-        </FixedLink>
-        <FixedLink href="/goals" label="Goals" active={pathname === "/goals"}>
-          <TargetIcon />
+        <FixedLink href="/" label="Dashboard" active={pathname === "/"}>
+          <DashboardIcon />
         </FixedLink>
       </div>
 
@@ -565,11 +562,11 @@ function Chevron({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function TargetIcon() {
+function DashboardIcon() {
   return (
     <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
-      <circle cx="8" cy="8" r="5.5" stroke="currentColor" strokeWidth="1.3" />
-      <circle cx="8" cy="8" r="1.6" fill="currentColor" />
+      <rect x="2.5" y="2.5" width="11" height="3.5" rx="1.2" stroke="currentColor" strokeWidth="1.3" />
+      <rect x="2.5" y="8.5" width="11" height="5" rx="1.2" stroke="currentColor" strokeWidth="1.3" />
     </svg>
   );
 }

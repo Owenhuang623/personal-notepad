@@ -8,7 +8,10 @@
     "start": "next start",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "backup": "node --env-file=.env.local scripts/backup.mjs"
+    "backup": "node --env-file=.env.local scripts/backup.mjs",
+    "test": "vitest run --config vitest.config.mts",
+    "test:watch": "vitest --config vitest.config.mts",
+    "test:db": "node --env-file=.env.local ./node_modules/.bin/vitest run --config vitest.db.config.mts"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.0",
@@ -33,6 +36,7 @@
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
     "tailwindcss": "^4.3.3",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
   }
 }

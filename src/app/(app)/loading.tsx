@@ -5,7 +5,7 @@
  */
 export default function Loading() {
   return (
-    <div className="flex h-dvh flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex h-14 shrink-0 items-center border-b border-line px-3 sm:px-5">
         <div className="h-3 w-32 animate-pulse rounded-full bg-hover" />
       </header>

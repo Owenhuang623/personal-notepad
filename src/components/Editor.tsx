@@ -24,7 +24,6 @@ import { PinIcon } from "./PinIcon";
 
 const PLACEHOLDERS = {
   scratch: "Start typing…",
-  goals: "What are you working toward?",
   saved: "Empty note",
   daily: "What's on your mind?",
 } as const;
@@ -41,13 +40,16 @@ export function Editor({
   initialPinned,
   title,
   journalDate,
+  withMenuButton = true,
 }: {
   noteId: string;
-  kind: "scratch" | "saved" | "daily" | "goals";
+  kind: "scratch" | "saved" | "daily";
   initialContent: string;
   initialPinned: boolean;
   title: string | null;
   journalDate: string | null;
+  /** Off when something above this header already carries it — the dashboard's timer bar. */
+  withMenuButton?: boolean;
 }) {
   const [content, setContent] = useState(initialContent);
   const [status, setStatus] = useState<Status>("saved");
@@ -66,9 +68,9 @@ export function Editor({
   const draftKey = `np:draft:${noteId}`;
   const wordCount = countWords(content);
 
-  // The scratchpad and the goals note are fixtures of the app rather than
-  // entries in the list: they can't be pinned, moved or deleted.
-  const singleton = kind === "scratch" || kind === "goals";
+  // The scratchpad is a fixture of the app rather than an entry in the list:
+  // it can't be pinned, moved or deleted.
+  const singleton = kind === "scratch";
 
   const applyContent = useCallback((value: string) => {
     contentRef.current = value;
@@ -231,22 +233,22 @@ export function Editor({
   }
 
   return (
-    <div className="flex h-dvh flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-3 sm:px-5">
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          aria-label="Open menu"
-          className="-ml-1 rounded-md p-1.5 text-ink-muted transition-colors hover:bg-hover hover:text-ink md:hidden"
-        >
-          <MenuIcon />
-        </button>
+        {withMenuButton && (
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            aria-label="Open menu"
+            className="-ml-1 rounded-md p-1.5 text-ink-muted transition-colors hover:bg-hover hover:text-ink md:hidden"
+          >
+            <MenuIcon />
+          </button>
+        )}
 
         <h1 className="min-w-0 flex-1 truncate text-[13.5px] font-medium">
           {kind === "scratch" ? (
             "Scratchpad"
-          ) : kind === "goals" ? (
-            "Goals"
           ) : (
             (title ??
             (journalDate ? <ClientDate iso={journalDate} variant="journal" /> : deriveTitle(content)))
@@ -268,14 +270,7 @@ export function Editor({
             >
               Save a copy
             </button>
-            {/* Only the scratchpad is meant to be emptied; goals accumulate. */}
-            {kind === "scratch" && (
-              <ConfirmButton
-                label="Clear"
-                confirmLabel="Confirm"
-                onConfirm={() => void clearPad()}
-              />
-            )}
+            <ConfirmButton label="Clear" confirmLabel="Confirm" onConfirm={() => void clearPad()} />
           </>
         ) : (
           <>

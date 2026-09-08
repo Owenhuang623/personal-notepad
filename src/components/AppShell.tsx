@@ -7,7 +7,7 @@ import { Sidebar } from "./Sidebar";
 
 export type NoteSummary = {
   id: string;
-  kind: "scratch" | "saved" | "daily" | "goals";
+  kind: "scratch" | "saved" | "daily";
   title: string | null;
   preview: string;
   journalDate: string | null;
@@ -112,7 +112,9 @@ export function AppShell({
 
           <Sidebar />
 
-          <main className="min-w-0 flex-1">{children}</main>
+          {/* A column, not a block: the dashboard stacks a fixed-height bar
+              above an editor that has to take exactly the rest. */}
+          <main className="flex min-w-0 flex-1 flex-col overflow-hidden">{children}</main>
         </div>
       </SidebarContext.Provider>
     </NotesContext.Provider>

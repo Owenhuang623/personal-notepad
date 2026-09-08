@@ -97,3 +97,57 @@ export function relativeTime(iso: string): string {
     year: new Date(then).getFullYear() === new Date().getFullYear() ? undefined : "numeric",
   });
 }
+
+/**
+ * The Sunday that starts the week `key` falls in.
+ *
+ * Computed from a local date key rather than a timestamp, so the boundary is
+ * local midnight on Sunday wherever the writer is — the same reason journal
+ * entries carry a day rather than an instant.
+ */
+export function startOfWeekKey(key: string): string {
+  const date = fromDateKey(key);
+  date.setDate(date.getDate() - date.getDay());
+  return localDateKey(date);
+}
+
+/** Walks a date key by whole days. Goes through Date so months and DST work out. */
+export function shiftDateKey(key: string, days: number): string {
+  const date = fromDateKey(key);
+  date.setDate(date.getDate() + days);
+  return localDateKey(date);
+}
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** "Sun". Hand-formatted for the same SSR reason as `journalLabel`. */
+export function weekdayLabel(key: string): string {
+  return WEEKDAYS[fromDateKey(key).getDay()];
+}
+
+/**
+ * A length of time as you'd say it: "12h 40m", "40m", "0m".
+ *
+ * Rounds down to the minute — a total that ticks its last digit every second is
+ * a number you watch rather than read, and the week's total is meant to be read.
+ */
+export function formatDuration(seconds: number): string {
+  const minutes = Math.max(0, Math.floor(seconds / 60));
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+
+  if (!hours) return `${rest}m`;
+  return rest ? `${hours}h ${rest}m` : `${hours}h`;
+}
+
+/** The running clock: "00:42:15". Seconds always shown — that's the point of it. */
+export function formatStopwatch(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(Math.floor(total / 3600))}:${pad(Math.floor(total / 60) % 60)}:${pad(total % 60)}`;
+}
+
+/** "9:02 AM" — when a stopwatch session started or stopped. */
+export function formatClockTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}

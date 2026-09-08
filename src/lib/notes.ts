@@ -1,18 +1,26 @@
 import "server-only";
 
-import { and, desc, eq, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
 import { notes, SINGLETON_KINDS, type Note } from "@/db/schema";
 
 /** What the sidebar needs: enough of the body to derive a title, nothing more. */
-export type NoteKind = "scratch" | "saved" | "daily" | "goals";
+export type NoteKind = "scratch" | "saved" | "daily";
 
-/** Kinds with exactly one row, each reached by its own route. */
+/** Kinds with exactly one row, reached by the dashboard rather than the list. */
 type SingletonKind = (typeof SINGLETON_KINDS)[number];
 
-/** Everything the sidebar lists — i.e. everything that isn't a singleton. */
-const listable = notInArray(notes.kind, [...SINGLETON_KINDS]);
+/**
+ * Everything the sidebar lists — i.e. everything that isn't a singleton.
+ *
+ * Also the guard on every write that could strand or destroy a note: the
+ * scratchpad must never be reachable by an id, because trashing it would leave
+ * the dashboard to lazily create a fresh empty row and hide the writing behind
+ * it. Exported so the route handlers share this exact predicate rather than
+ * each rebuilding their own, and so the tests can assert it is really there.
+ */
+export const listable = notInArray(notes.kind, [...SINGLETON_KINDS]);
 
 export type NoteSummary = {
   id: string;
@@ -73,7 +81,7 @@ export async function listSavedNotes(): Promise<NoteSummary[]> {
 }
 
 /**
- * Singletons are created lazily on first visit so a fresh database needs no
+ * The scratchpad is created lazily on first visit so a fresh database needs no
  * seeding. The partial unique index on `kind` makes the insert race-safe.
  */
 async function getSingletonNote(kind: SingletonKind): Promise<NoteDetail> {
@@ -94,20 +102,46 @@ export function getScratchNote(): Promise<NoteDetail> {
   return getSingletonNote("scratch");
 }
 
-export function getGoalsNote(): Promise<NoteDetail> {
-  return getSingletonNote("goals");
-}
-
 export async function getSavedNote(id: string): Promise<NoteDetail | null> {
   const [row] = await getDb()
     .select()
     .from(notes)
-    // Singletons live at their own routes; /n/<id> must not become a second way
-    // in, where they would be shown a Delete button that can't apply to them.
+    // The scratchpad lives on the dashboard; /n/<id> must not become a second
+    // way in, where it would be shown a Delete button that can't apply to it.
     .where(and(eq(notes.id, id), listable))
     .limit(1);
 
   return row ? toDetail(row) : null;
+}
+
+/*
+ * The `where` clause of every destructive path, in one place.
+ *
+ * These are the reason a stray query can't cost you a note, so they are built
+ * here rather than inline at the call site: each one is a single expression a
+ * test can render to SQL and check, and there is no second copy to drift.
+ */
+
+/** Renaming, pinning, moving, trashing — anything but editing the text. */
+export function structuralUpdateWhere(id: string) {
+  return and(eq(notes.id, id), listable);
+}
+
+/** Trashing a note. Refuses a row that is already in the trash, and singletons. */
+export function softDeleteWhere(id: string) {
+  return and(eq(notes.id, id), listable, isNull(notes.deletedAt));
+}
+
+/**
+ * Destroying a note for good.
+ *
+ * `isNotNull(deletedAt)` is the load-bearing part: permanent removal is only
+ * ever reachable for a row that is *already* in the trash, so a single stray
+ * DELETE against a live note can do nothing at all. It is not a convenience —
+ * it is the whole guarantee, and `notes-guards.test.ts` fails if it goes.
+ */
+export function purgeWhere(id: string) {
+  return and(eq(notes.id, id), listable, isNotNull(notes.deletedAt));
 }
 
 /** The sidebar's view of a row. Used by the create endpoints so a new note can

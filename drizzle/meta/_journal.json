@@ -36,6 +36,20 @@
       "when": 1787589139065,
       "tag": "0004_wonderful_lester",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788810687723,
+      "tag": "0005_silent_strong_guy",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788812786187,
+      "tag": "0006_panoramic_toad_men",
+      "breakpoints": true
     }
   ]
 }
