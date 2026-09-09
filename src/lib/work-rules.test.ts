@@ -8,6 +8,7 @@ import {
   MAX_MANUAL_SECONDS,
   MAX_SESSION_SECONDS,
   parseDurationSeconds,
+  shouldRollOver,
   totalSeconds,
   type WorkSessionSummary,
 } from "./work-rules";
@@ -146,15 +147,34 @@ describe("totalSeconds", () => {
     expect(totalSeconds([running], running, 1200, "2026-08-30", "2026-09-05")).toBe(1200);
   });
 
-  it("totals a single day when given the same key twice", () => {
-    // This is how the stopwatch reads the day: a one-day-wide span.
-    const sessions = [closed("2026-09-07", 3600), closed("2026-09-08", 7200)];
-    expect(totalSeconds(sessions, null, 0, "2026-09-07", "2026-09-07")).toBe(10_800);
+  it("counts only the days inside the span", () => {
+    const sessions = [closed("2026-09-06", 3600), closed("2026-09-07", 7200), closed("2026-09-12", 900)];
+    expect(totalSeconds(sessions, null, 0, "2026-09-07", "2026-09-07")).toBe(7200);
+    expect(totalSeconds(sessions, null, 0, "2026-09-06", "2026-09-07")).toBe(10_800);
   });
 
-  it("adds nothing live when the span is unknown", () => {
+  /*
+   * The day clock is this function with a one-day-wide span, handed the whole
+   * week. It shipped summing every row it was given, so "Today" carried the
+   * week forward and never reset at midnight.
+   */
+  it("reads a single day out of a full week, and is zero on a day with nothing", () => {
+    const week = [closed("2026-09-06", 8100), closed("2026-09-07", 11_400)];
+
+    expect(totalSeconds(week, null, 0, "2026-09-07", "2026-09-07")).toBe(11_400);
+    // Tuesday: nothing worked yet. The clock must read zero, not the week.
+    expect(totalSeconds(week, null, 0, "2026-09-08", "2026-09-08")).toBe(0);
+  });
+
+  it("drops yesterday the moment the day key rolls over", () => {
+    const yesterday = [closed("2026-09-08", 65)];
+    expect(totalSeconds(yesterday, null, 0, "2026-09-08", "2026-09-08")).toBe(65);
+    expect(totalSeconds(yesterday, null, 0, "2026-09-09", "2026-09-09")).toBe(0);
+  });
+
+  it("totals nothing when the span is unknown — before the browser reports its day", () => {
     const running = open("2026-09-07", "2026-09-07T09:00:00.000Z");
-    expect(totalSeconds([running], running, 600, null, null)).toBe(0);
+    expect(totalSeconds([closed("2026-09-07", 3600), running], running, 600, null, null)).toBe(0);
   });
 });
 
@@ -201,5 +221,24 @@ describe("buildDays", () => {
     const fromDays = days.reduce((total, day) => total + day.seconds, 0);
 
     expect(fromDays).toBe(totalSeconds(sessions, running, 2400, WEEK_START, WEEK_END));
+  });
+});
+
+describe("shouldRollOver", () => {
+  it("is false while the session is still on today's date", () => {
+    expect(shouldRollOver(open("2026-09-08", "2026-09-08T23:00:00.000Z"), "2026-09-08")).toBe(false);
+  });
+
+  it("is true once midnight has moved the day underneath a running session", () => {
+    // Started at 11pm on the 8th, still going at 12:01am on the 9th.
+    expect(shouldRollOver(open("2026-09-08", "2026-09-08T23:00:00.000Z"), "2026-09-09")).toBe(true);
+  });
+
+  it("is false when nothing is running", () => {
+    expect(shouldRollOver(null, "2026-09-09")).toBe(false);
+  });
+
+  it("is false before the browser has reported its day", () => {
+    expect(shouldRollOver(open("2026-09-08", "2026-09-08T23:00:00.000Z"), null)).toBe(false);
   });
 });

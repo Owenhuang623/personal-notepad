@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildDays,
   elapsedSeconds,
+  shouldRollOver,
   totalSeconds,
   type WorkDay,
   type WorkSessionSummary,
@@ -200,10 +201,13 @@ export function WorkTimer({ initialWeek }: { initialWeek: InitialWeek | null }) 
   const elapsed = elapsedSeconds(running?.startedAt ?? null, now);
 
   /*
-   * The day the clock is counting for. Normally today — but a session that
-   * began before midnight and is still going belongs to the day it started on,
-   * and the clock should keep counting rather than snap back to zero under a
-   * stopwatch that is visibly still running.
+   * The day the clock is counting for.
+   *
+   * Today, almost always — the rollover above keeps a running session on the
+   * current date. Falling back to the session's own day covers the seconds
+   * before that write lands, and the case where it can't land at all because
+   * the network is gone: better a clock that keeps counting on yesterday's date
+   * than one that reads zero underneath a visibly running stopwatch.
    */
   const clockDay = running?.localDate ?? today;
 
@@ -266,6 +270,33 @@ export function WorkTimer({ initialWeek }: { initialWeek: InitialWeek | null }) 
     },
     [reload],
   );
+
+  /*
+   * Midnight, with the stopwatch still going: close the session on the day it
+   * belongs to and open a fresh one on the new day. Each day then keeps only
+   * the hours actually worked in it, and "Today" starts from zero when the date
+   * does rather than carrying the small hours of the previous evening.
+   *
+   * Uses the ordinary stop and start endpoints — the same two writes the buttons
+   * make, so there is no third path to the running-session index to get wrong.
+   */
+  useEffect(() => {
+    if (busy || !today || !shouldRollOver(running, today)) return;
+
+    void mutate(async () => {
+      await fetch("/api/work/timer", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "stop" }),
+      });
+
+      return fetch("/api/work/timer", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "start", date: today }),
+      });
+    }, "Couldn't roll the timer over to today");
+  }, [running, today, busy, mutate]);
 
   const toggle = useCallback(() => {
     if (!today) return;

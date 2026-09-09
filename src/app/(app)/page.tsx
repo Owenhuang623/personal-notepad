@@ -35,8 +35,6 @@ export default async function DashboardPage() {
         initialPinned={note.pinnedAt !== null}
         title={note.title}
         journalDate={note.journalDate}
-        // The timer bar above already carries it.
-        withMenuButton={false}
       />
     </>
   );

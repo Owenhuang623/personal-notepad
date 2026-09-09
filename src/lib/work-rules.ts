@@ -66,12 +66,17 @@ export function elapsedSeconds(startedAt: string | null, now: number): number {
 }
 
 /**
- * The total across a span of days.
+ * The total across a span of days, `from`..`to` inclusive.
  *
- * The running session also appears in `sessions`, carrying a duration of 0, so
- * adding its live elapsed time counts it exactly once — and only when the day
- * it started on falls inside the span. That last condition is what keeps a past
- * week a fixed number while the clock is still going.
+ * Both halves are filtered by the span. That sounds obvious, and it is the whole
+ * point: an earlier version filtered only the running session and summed every
+ * closed row it was handed, which was invisibly correct for the week bar — it is
+ * given exactly one week of rows — and wrong for the day clock, which is handed
+ * the same week and a one-day span. Today's total silently included the rest of
+ * the week, so it never went back to zero at midnight.
+ *
+ * The running session also appears in `sessions` carrying a duration of 0, so
+ * adding its live elapsed time counts it exactly once.
  */
 export function totalSeconds(
   sessions: WorkSessionSummary[],
@@ -80,11 +85,31 @@ export function totalSeconds(
   from: string | null,
   to: string | null,
 ): number {
-  const closed = sessions.reduce((total, session) => total + session.durationSeconds, 0);
-  const live =
-    running && from && to && running.localDate >= from && running.localDate <= to ? elapsed : 0;
+  if (!from || !to) return 0;
+
+  const within = (localDate: string) => localDate >= from && localDate <= to;
+
+  const closed = sessions.reduce(
+    (total, session) => (within(session.localDate) ? total + session.durationSeconds : total),
+    0,
+  );
+  const live = running && within(running.localDate) ? elapsed : 0;
 
   return closed + live;
+}
+
+/**
+ * Whether a running session has been left open into a new day.
+ *
+ * A block belongs to the day it started on, so a stopwatch running from 11pm to
+ * 1am would otherwise keep counting toward yesterday — and "Today" would show
+ * last night's hours well into the morning, which is the opposite of resetting
+ * at midnight. The answer is to close it at the boundary and open a fresh one
+ * dated the new day: each day then keeps the part that was actually worked in
+ * it, and the clock starts from zero exactly when the date does.
+ */
+export function shouldRollOver(running: WorkSessionSummary | null, today: string | null): boolean {
+  return running !== null && today !== null && running.localDate !== today;
 }
 
 /**

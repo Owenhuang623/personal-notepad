@@ -40,7 +40,6 @@ export function Editor({
   initialPinned,
   title,
   journalDate,
-  withMenuButton = true,
 }: {
   noteId: string;
   kind: "scratch" | "saved" | "daily";
@@ -48,12 +47,9 @@ export function Editor({
   initialPinned: boolean;
   title: string | null;
   journalDate: string | null;
-  /** Off when something above this header already carries it — the dashboard's timer bar. */
-  withMenuButton?: boolean;
 }) {
   const [content, setContent] = useState(initialContent);
   const [status, setStatus] = useState<Status>("saved");
-  const [flash, setFlash] = useState<string | null>(null);
   const [pinned, setPinned] = useState(initialPinned);
 
   const contentRef = useRef(initialContent);
@@ -68,8 +64,12 @@ export function Editor({
   const draftKey = `np:draft:${noteId}`;
   const wordCount = countWords(content);
 
-  // The scratchpad is a fixture of the app rather than an entry in the list:
-  // it can't be pinned, moved or deleted.
+  /*
+   * The scratchpad is a fixture of the app rather than an entry in the list: it
+   * can't be pinned, moved or deleted, it isn't previewed in the sidebar, and
+   * on the dashboard it carries no header of its own — the timer bar above it
+   * is the only chrome, and the writing gets the rest of the page.
+   */
   const singleton = kind === "scratch";
 
   const applyContent = useCallback((value: string) => {
@@ -140,68 +140,23 @@ export function Editor({
     };
   }, [flush]);
 
-  /**
-   * Returns what happened so callers can react — `clearPad` must not wipe the
-   * page if the copy it was archiving never reached the server.
-   */
-  const saveCopy = useCallback(async (message = "Copy saved"): Promise<"saved" | "empty" | "error"> => {
-    if (!contentRef.current.trim()) return "empty";
-
-    try {
-      const response = await fetch("/api/notes", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ content: contentRef.current }),
-      });
-      if (!response.ok) return "error";
-    } catch {
-      return "error";
-    }
-
-    await refresh();
-    setFlash(message);
-    return "saved";
-  }, [refresh]);
-
-  useEffect(() => {
-    if (!flash) return;
-    const timer = setTimeout(() => setFlash(null), 2500);
-    return () => clearTimeout(timer);
-  }, [flash]);
-
+  // ⌘S just means "don't wait for the debounce". Everything autosaves anyway.
   useEffect(() => {
     function handleKeydown(event: KeyboardEvent) {
       if (!(event.metaKey || event.ctrlKey) || event.key !== "s") return;
       event.preventDefault();
-      if (singleton) void saveCopy();
-      else void flush();
+      void flush();
     }
 
     window.addEventListener("keydown", handleKeydown);
     return () => window.removeEventListener("keydown", handleKeydown);
-  }, [singleton, saveCopy, flush]);
+  }, [flush]);
 
   function handleChange(value: string) {
     applyContent(value);
     setStatus("dirty");
     window.localStorage.setItem(draftKey, value);
     if (!singleton) updatePreview(noteId, value);
-  }
-
-  /**
-   * Clearing keeps a copy in the sidebar first, so the one destructive action on
-   * the page you use most isn't destructive. If the copy can't be saved, nothing
-   * is cleared — losing the text is the exact outcome this is here to prevent.
-   */
-  async function clearPad() {
-    const archived = await saveCopy("Cleared · copy saved");
-    if (archived === "error") {
-      setFlash("Couldn't save a copy — nothing cleared");
-      return;
-    }
-
-    handleChange("");
-    editorRef.current?.focus();
   }
 
   async function togglePin() {
@@ -234,8 +189,17 @@ export function Editor({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-3 sm:px-5">
-        {withMenuButton && (
+      {/*
+        * The scratchpad has no header of its own.
+        *
+        * On the dashboard the timer bar above it is already a full-width row of
+        * chrome, and a second one underneath saying "Scratchpad" — a page with
+        * one writing surface on it — was labelling the obvious and costing the
+        * writing 56px. Its save state moved into the corner of the page below;
+        * see `statusLabel`.
+        */}
+      {!singleton && (
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-3 sm:px-5">
           <button
             type="button"
             onClick={() => setOpen(true)}
@@ -244,51 +208,30 @@ export function Editor({
           >
             <MenuIcon />
           </button>
-        )}
 
-        <h1 className="min-w-0 flex-1 truncate text-[13.5px] font-medium">
-          {kind === "scratch" ? (
-            "Scratchpad"
-          ) : (
-            (title ??
-            (journalDate ? <ClientDate iso={journalDate} variant="journal" /> : deriveTitle(content)))
-          )}
-        </h1>
+          <h1 className="min-w-0 flex-1 truncate text-[13.5px] font-medium">
+            {title ??
+              (journalDate ? <ClientDate iso={journalDate} variant="journal" /> : deriveTitle(content))}
+          </h1>
 
-        <span className="shrink-0 text-[12px] tabular-nums text-ink-faint">
-          {flash ?? statusLabel(status)}
-        </span>
+          <span className="shrink-0 text-[12px] tabular-nums text-ink-faint">
+            {statusLabel(status)}
+          </span>
 
-        {singleton ? (
-          <>
-            <button
-              type="button"
-              onClick={() => void saveCopy()}
-              disabled={!content.trim()}
-              title="Save a copy (⌘S)"
-              className="rounded-md px-2.5 py-1.5 text-[13px] text-ink-muted transition-colors hover:bg-hover hover:text-ink disabled:pointer-events-none disabled:opacity-40"
-            >
-              Save a copy
-            </button>
-            <ConfirmButton label="Clear" confirmLabel="Confirm" onConfirm={() => void clearPad()} />
-          </>
-        ) : (
-          <>
-            <button
-              type="button"
-              onClick={() => void togglePin()}
-              title={pinned ? "Unpin from the sidebar" : "Pin to the top of the sidebar"}
-              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors hover:bg-hover ${
-                pinned ? "text-ink" : "text-ink-muted hover:text-ink"
-              }`}
-            >
-              <PinIcon className="h-3.5 w-3.5" />
-              {pinned ? "Pinned" : "Pin"}
-            </button>
-            <ConfirmButton label="Delete" confirmLabel="Confirm" onConfirm={() => void deleteNote()} />
-          </>
-        )}
-      </header>
+          <button
+            type="button"
+            onClick={() => void togglePin()}
+            title={pinned ? "Unpin from the sidebar" : "Pin to the top of the sidebar"}
+            className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors hover:bg-hover ${
+              pinned ? "text-ink" : "text-ink-muted hover:text-ink"
+            }`}
+          >
+            <PinIcon className="h-3.5 w-3.5" />
+            {pinned ? "Pinned" : "Pin"}
+          </button>
+          <ConfirmButton label="Delete" confirmLabel="Confirm" onConfirm={() => void deleteNote()} />
+        </header>
+      )}
 
       <div className="relative min-h-0 flex-1">
         <div className="mx-auto flex h-full w-full max-w-[46rem] flex-col px-5 sm:px-8">
@@ -320,6 +263,13 @@ export function Editor({
             </div>
           </div>
         </div>
+
+        {/* Sits in the padding above the first line, so it never crowds the text. */}
+        {singleton && (
+          <p className="pointer-events-none absolute right-4 top-3 text-[11.5px] tabular-nums text-ink-faint select-none">
+            {statusLabel(status)}
+          </p>
+        )}
 
         {wordCount > 0 && (
           <p className="pointer-events-none absolute bottom-3 right-4 text-[11.5px] tabular-nums text-ink-faint select-none">
