@@ -255,6 +255,7 @@ export function Sidebar() {
           notes={plain}
           collapsed={collapsed.notes}
           onToggle={toggleSection}
+          action={{ label: "New note", onSelect: createNote }}
           empty="Nothing saved yet."
           {...sectionProps}
         />
