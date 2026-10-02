@@ -115,6 +115,19 @@ describe("structural updates", () => {
   });
 });
 
+describe("filing into a folder", () => {
+  it("only ever reaches a saved note, never a journal entry or the scratchpad", async () => {
+    const { sql, params } = await render(({ db, notes, fileIntoFolderWhere }) =>
+      db.update(notes).set({ folderId: ID }).where(fileIntoFolderWhere(ID)),
+    );
+
+    expect(sql).toContain("update");
+    expect(sql).toMatch(/"kind" = \$\d/);
+    expect(params).toContain("saved");
+    expect(params).toContain("scratch"); // the not-a-singleton guard, still there
+  });
+});
+
 describe("the singleton guard itself", () => {
   it("covers every kind declared a singleton, not a hardcoded list", async () => {
     const [{ SINGLETON_KINDS }, { params }] = await Promise.all([
@@ -131,5 +144,33 @@ describe("listing", () => {
   it("hides singletons from the sidebar without filtering in JavaScript", async () => {
     const { listable } = await load();
     expect(listable).toBeDefined();
+  });
+});
+
+describe("deleting a folder", () => {
+  const PARENT = "99999999-8888-7777-6666-555555555555";
+
+  async function statements() {
+    const { rehomeNotes, rehomeFolders, removeFolder } = await import("@/lib/folders");
+    return [rehomeNotes(ID, PARENT), rehomeFolders(ID, PARENT), removeFolder(ID)].map((query) => {
+      const { sql, params } = query.toSQL();
+      return { sql: sql.toLowerCase(), params };
+    });
+  }
+
+  it("moves the folder's notes rather than deleting them", async () => {
+    const [notesStep] = await statements();
+    expect(notesStep.sql).toMatch(/^update "notes" set "folder_id" = \$1 where "notes"."folder_id" = \$2/);
+    expect(notesStep.params).toEqual([PARENT, ID]);
+  });
+
+  it("never sends a delete to the notes table", async () => {
+    for (const { sql } of await statements()) expect(sql).not.toContain('delete from "notes"');
+  });
+
+  it("deletes exactly one folder, by id", async () => {
+    const remove = (await statements())[2];
+    expect(remove.sql).toMatch(/^delete from "folders" where "folders"."id" = \$1/);
+    expect(remove.params).toEqual([ID]);
   });
 });

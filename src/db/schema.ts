@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   boolean,
   date,
   index,
@@ -19,6 +20,29 @@ import {
  * `saved` and `daily` rows are the ones the sidebar lists.
  */
 export const SINGLETON_KINDS = ["scratch"] as const;
+
+/**
+ * Folders for saved notes, nestable to any depth.
+ *
+ * A folder holds no writing — it is a name and a place in the tree — so it can
+ * be deleted outright. Deleting one never deletes what's in it: the route
+ * moves its notes and subfolders up to its parent first, and the foreign keys
+ * below fall back to `set null` (the top level) as a backstop, so even a raw
+ * `DELETE FROM folders` can only ever unfile a note.
+ */
+export const folders = pgTable(
+  "folders",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    /** Null for a top-level folder. */
+    parentId: uuid("parent_id").references((): AnyPgColumn => folders.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("folders_parent").on(table.parentId)],
+);
+
+export type Folder = typeof folders.$inferSelect;
 
 export const notes = pgTable(
   "notes",
@@ -44,6 +68,11 @@ export const notes = pgTable(
      * Permanent removal is only permitted on rows that already have it set.
      */
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    /**
+     * The folder a saved note is filed in; null means the top level. Journal
+     * entries are filed by date instead and leave this null.
+     */
+    folderId: uuid("folder_id").references(() => folders.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

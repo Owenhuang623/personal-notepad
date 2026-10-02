@@ -135,6 +135,31 @@ describe("deriveTitle", () => {
     expect(deriveTitle("   \n\n")).toBe("Untitled");
   });
 
+  it("shows a heading as its words, not its hashes", () => {
+    expect(deriveTitle("### Coffee Chat with Feras\nbody")).toBe("Coffee Chat with Feras");
+  });
+
+  it("strips list, task and quote markers", () => {
+    expect(deriveTitle("- [ ] Buy milk")).toBe("Buy milk");
+    expect(deriveTitle("1. First")).toBe("First");
+    expect(deriveTitle("> quoted")).toBe("quoted");
+  });
+
+  it("strips inline formatting and keeps link text", () => {
+    expect(deriveTitle("**Bold** and _it_ with [a link](https://x.y) and `code`")).toBe(
+      "Bold and it with a link and code",
+    );
+  });
+
+  it("skips lines that are only syntax", () => {
+    expect(deriveTitle("---\n```js\nconst a = 1")).toBe("const a = 1");
+    expect(deriveTitle("#\nReal title")).toBe("Real title");
+  });
+
+  it("keeps a tag, which is words rather than syntax", () => {
+    expect(deriveTitle("#ideas for the weekend")).toBe("#ideas for the weekend");
+  });
+
   it("truncates a very long first line", () => {
     expect(deriveTitle("x".repeat(200))).toHaveLength(65); // 64 chars + ellipsis
   });

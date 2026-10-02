@@ -3,11 +3,24 @@
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown, markdownKeymap, markdownLanguage } from "@codemirror/lang-markdown";
 import { EditorState } from "@codemirror/state";
-import { EditorView, keymap, placeholder as placeholderExtension } from "@codemirror/view";
+import {
+  EditorView,
+  highlightActiveLine,
+  keymap,
+  placeholder as placeholderExtension,
+} from "@codemirror/view";
 import { useEffect, useRef } from "react";
 
-import { toggleTask } from "./editor/commands";
+import { autoSpaceAfterMarker } from "./editor/autoSpace";
+import {
+  continueListTight,
+  deleteMarkerBackward,
+  exitEmptyQuote,
+  setListStyle,
+  toggleTask,
+} from "./editor/commands";
 import { livePreview } from "./editor/livePreview";
+import { Hashtag, Highlight } from "./editor/syntax";
 import { notepadTheme } from "./editor/theme";
 
 export type MarkdownEditorHandle = { focus: () => void };
@@ -23,12 +36,15 @@ export function MarkdownEditor({
   placeholder,
   autoFocus,
   onReady,
+  onTag,
 }: {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
   autoFocus?: boolean;
   onReady?: (handle: MarkdownEditorHandle) => void;
+  /** ⌘-click on a #tag. */
+  onTag?: (tag: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -41,6 +57,9 @@ export function MarkdownEditor({
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
 
+  const onTagRef = useRef(onTag);
+  onTagRef.current = onTag;
+
   useEffect(() => {
     if (!host.current) return;
 
@@ -51,12 +70,26 @@ export function MarkdownEditor({
         extensions: [
           history(),
           EditorView.lineWrapping,
-          markdown({ base: markdownLanguage }),
-          livePreview(),
+          // addKeymap: false — markdown() would otherwise install its keymap at high
+          // precedence, ahead of the marker-aware Backspace and Enter below.
+          markdown({ base: markdownLanguage, extensions: [Highlight, Hashtag], addKeymap: false }),
+          livePreview({ onTag: (tag) => onTagRef.current?.(tag) }),
+          autoSpaceAfterMarker,
+          // Styled transparent; it's only here to tell the heading marks which
+          // line the cursor is on.
+          highlightActiveLine(),
           notepadTheme,
           placeholder ? placeholderExtension(placeholder) : [],
           keymap.of([
             { key: "Mod-Enter", run: toggleTask },
+            // As in Apple Notes: ⌘⇧7 numbered, ⌘⇧8 bullets, ⌘⇧9 checklist.
+            { key: "Mod-Shift-7", run: setListStyle("ordered"), preventDefault: true },
+            { key: "Mod-Shift-8", run: setListStyle("bullet"), preventDefault: true },
+            { key: "Mod-Shift-9", run: setListStyle("task"), preventDefault: true },
+            { key: "Backspace", run: deleteMarkerBackward },
+            { key: "Enter", run: exitEmptyQuote },
+            // Ahead of markdownKeymap's own Enter, which would add blank lines.
+            { key: "Enter", run: continueListTight },
             // Tab indents rather than moving focus — nested lists need it.
             indentWithTab,
             // Before defaultKeymap so Enter continues a list instead of just

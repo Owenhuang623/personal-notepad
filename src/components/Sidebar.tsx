@@ -2,31 +2,34 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { deriveTitle, journalLabel, localDateKey } from "@/lib/format";
+import { localDateKey } from "@/lib/format";
+import { extractTags } from "@/lib/tags";
 
 import { useNotes, useSidebar, type NoteSummary } from "./AppShell";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
+import { JournalTree } from "./JournalTree";
 import { Logo } from "./Logo";
-import { PinIcon } from "./PinIcon";
+import { NoteTree, useMoveNoteTargets } from "./NoteTree";
+import { NoteRow, SectionHeader, type SectionAction } from "./SidebarRows";
 
 const COLLAPSE_KEY = "np:collapsed";
-type SectionId = "pinned" | "journal" | "notes" | "trash";
+type SectionId = "pinned" | "journal" | "notes" | "tags" | "trash";
 
-type MenuState = { note: NoteSummary; x: number; y: number };
+type MenuState = { items: MenuItem[]; x: number; y: number };
 
 export function Sidebar() {
-  const { notes, refresh, addNote } = useNotes();
-  const { open } = useSidebar();
+  const { notes, refresh, openNote, createNote, openToday } = useNotes();
+  const { open, openSearch } = useSidebar();
   const pathname = usePathname();
   const router = useRouter();
 
-  const [busy, setBusy] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<SectionId, boolean>>({
     pinned: false,
     journal: false,
     notes: false,
+    tags: false,
     // Trash stays out of the way until you go looking for it.
     trash: true,
   });
@@ -55,57 +58,22 @@ export function Sidebar() {
     return () => clearTimeout(timer);
   }, [error]);
 
-  const live = notes.filter((note) => note.deletedAt === null);
+  const live = useMemo(() => notes.filter((note) => note.deletedAt === null), [notes]);
   const pinned = live.filter((note) => note.pinnedAt !== null);
-  const journal = live.filter((note) => note.pinnedAt === null && note.kind === "daily");
-  const plain = live.filter((note) => note.pinnedAt === null && note.kind === "saved");
+  // Pinned notes stay in their folder or month too; Pinned is a shortcut, not a place.
+  const journal = live.filter((note) => note.kind === "daily");
+  const saved = live.filter((note) => note.kind === "saved");
+  const moveTargets = useMoveNoteTargets();
   const trashed = notes.filter((note) => note.deletedAt !== null);
 
-  /*
-   * Create, show, navigate — in that order, with nothing awaited in between
-   * that the user has to wait on. Re-listing the notes before navigating added
-   * a second round trip to every new note; the row the POST returns is the same
-   * row that list would have contained.
-   */
-  async function createNote() {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const response = await fetch("/api/notes", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ content: "" }),
-      });
-      if (!response.ok) return;
-
-      const { id, note } = (await response.json()) as { id: string; note: NoteSummary };
-      addNote(note);
-      router.push(`/n/${id}`);
-    } finally {
-      setBusy(false);
+  // Tags are read out of the text itself, so they need no bookkeeping anywhere.
+  const tags = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const note of live) {
+      for (const tag of extractTags(note.content)) counts.set(tag, (counts.get(tag) ?? 0) + 1);
     }
-  }
-
-  /** Opens today's entry, creating it only if today doesn't have one yet. */
-  async function openToday() {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const response = await fetch("/api/journal", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ date: localDateKey() }),
-      });
-      if (!response.ok) return;
-
-      const { id, note } = (await response.json()) as { id: string; note?: NoteSummary };
-      // Only a freshly created entry needs adding; an existing one is already listed.
-      if (note) addNote(note);
-      router.push(`/n/${id}`);
-    } finally {
-      setBusy(false);
-    }
-  }
+    return [...counts].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [live]);
 
   async function patchNote(id: string, body: Record<string, unknown>) {
     const response = await fetch(`/api/notes/${id}`, {
@@ -146,7 +114,7 @@ export function Sidebar() {
     if (pathname === `/n/${note.id}`) router.push("/");
   }
 
-  function menuItems(note: NoteSummary): MenuItem[] {
+  function menuItems(note: NoteSummary, x: number, y: number): MenuItem[] {
     const isPinned = note.pinnedAt !== null;
     const isJournal = note.kind === "daily";
 
@@ -168,6 +136,15 @@ export function Sidebar() {
         label: isPinned ? "Unpin" : "Pin",
         onSelect: () => void patchNote(note.id, { pinned: !isPinned }),
       },
+      // Journal entries file themselves by date; only notes go in folders.
+      ...(isJournal
+        ? []
+        : [
+            {
+              label: "Move to folder…",
+              onSelect: () => setMenu({ items: moveTargets(note, setError), x, y }),
+            },
+          ]),
       {
         label: isJournal ? "Move to Notes" : "Move to Journal",
         onSelect: () =>
@@ -180,16 +157,16 @@ export function Sidebar() {
                 { move: "journal", date: localDateKey(new Date(note.createdAt)) },
           ),
       },
-      { label: "Delete", danger: true, onSelect: () => void deleteNote(note) },
+      { label: "Delete", danger: true, separated: true, onSelect: () => void deleteNote(note) },
     ];
   }
 
   const sectionProps = {
     pathname,
-    router,
+    openNote,
     renaming,
     setRenaming,
-    openMenu: (note: NoteSummary, x: number, y: number) => setMenu({ note, x, y }),
+    openMenu: (note: NoteSummary, x: number, y: number) => setMenu({ items: menuItems(note, x, y), x, y }),
     onRename: (id: string, title: string) => void patchNote(id, { title }),
   };
 
@@ -209,13 +186,24 @@ export function Sidebar() {
         </Link>
         <button
           type="button"
-          onClick={createNote}
-          disabled={busy}
+          onClick={() => void createNote()}
           aria-label="New note"
           title="New note"
-          className="rounded-md p-1.5 text-ink-faint transition-colors hover:bg-hover hover:text-ink disabled:opacity-50"
+          className="rounded-md p-1.5 text-ink-faint transition-colors hover:bg-hover hover:text-ink"
         >
-          <PlusIcon />
+          <ComposeIcon />
+        </button>
+      </div>
+
+      <div className="px-3 pt-1.5">
+        <button
+          type="button"
+          onClick={() => openSearch()}
+          className="flex w-full items-center gap-2 rounded-lg border border-line bg-canvas/60 px-2.5 py-[7px] text-left text-[13px] text-ink-faint shadow-[0_1px_0_rgba(0,0,0,0.02)] transition-colors hover:border-line-strong hover:text-ink-muted"
+        >
+          <SearchIcon />
+          <span className="flex-1">Search</span>
+          <kbd className="font-sans text-[11px] tracking-wide">⌘K</kbd>
         </button>
       </div>
 
@@ -224,6 +212,14 @@ export function Sidebar() {
         <FixedLink href="/" label="Dashboard" active={pathname === "/"}>
           <DashboardIcon />
         </FixedLink>
+        <button
+          type="button"
+          onClick={() => void openToday()}
+          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13.5px] text-ink-muted transition-colors hover:bg-hover hover:text-ink"
+        >
+          <TodayIcon />
+          Today&apos;s entry
+        </button>
       </div>
 
       <nav className="mt-3 min-h-0 flex-1 overflow-y-auto px-3 pb-3">
@@ -238,27 +234,45 @@ export function Sidebar() {
           />
         )}
 
-        <Section
-          id="journal"
-          label="Journal"
-          notes={journal}
+        <JournalTree
+          entries={journal}
+          rowProps={sectionProps}
           collapsed={collapsed.journal}
-          onToggle={toggleSection}
-          action={{ label: "Today's entry", onSelect: openToday }}
-          empty="No entries yet."
-          {...sectionProps}
+          onToggle={() => toggleSection("journal")}
+          onToday={() => void openToday()}
         />
 
-        <Section
-          id="notes"
-          label="Notes"
-          notes={plain}
+        <NoteTree
+          notes={saved}
+          rowProps={{ ...sectionProps, showDate: true }}
           collapsed={collapsed.notes}
-          onToggle={toggleSection}
-          action={{ label: "New note", onSelect: createNote }}
-          empty="Nothing saved yet."
-          {...sectionProps}
+          onToggle={() => toggleSection("notes")}
+          showMenu={(items, x, y) => setMenu({ items, x, y })}
+          onError={setError}
         />
+
+        {tags.length > 0 && (
+          <section className="mb-3">
+            <SectionHeader label="Tags" collapsed={collapsed.tags} onToggle={() => toggleSection("tags")} />
+            {!collapsed.tags && (
+              <ul className="space-y-px">
+                {tags.map(([tag, count]) => (
+                  <li key={tag}>
+                    <button
+                      type="button"
+                      onClick={() => openSearch(`#${tag}`)}
+                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-[7px] text-left text-[13.5px] text-ink-muted transition-colors hover:bg-hover hover:text-ink"
+                    >
+                      <span className="text-accent opacity-70">#</span>
+                      <span className="min-w-0 flex-1 truncate">{tag}</span>
+                      <span className="text-[11.5px] tabular-nums text-ink-faint">{count}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
 
         {trashed.length > 0 && (
           <Section
@@ -294,9 +308,11 @@ export function Sidebar() {
 
       {menu && (
         <ContextMenu
+          // A fresh menu for fresh items, so "Move to…" re-measures where it fits.
+          key={menu.items.map((item) => item.key ?? item.label).join("|")}
           x={menu.x}
           y={menu.y}
-          items={menuItems(menu.note)}
+          items={menu.items}
           onClose={() => setMenu(null)}
         />
       )}
@@ -334,10 +350,11 @@ type SectionProps = {
   notes: NoteSummary[];
   collapsed: boolean;
   onToggle: (id: SectionId) => void;
-  action?: { label: string; onSelect: () => void };
+  actions?: SectionAction[];
   empty?: string;
+  showDates?: boolean;
   pathname: string;
-  router: ReturnType<typeof useRouter>;
+  openNote: (id: string) => void;
   renaming: string | null;
   setRenaming: (id: string | null) => void;
   openMenu: (note: NoteSummary, x: number, y: number) => void;
@@ -350,10 +367,11 @@ function Section({
   notes,
   collapsed,
   onToggle,
-  action,
+  actions,
   empty,
+  showDates = false,
   pathname,
-  router,
+  openNote,
   renaming,
   setRenaming,
   openMenu,
@@ -361,28 +379,7 @@ function Section({
 }: SectionProps) {
   return (
     <section className="mb-3">
-      <div className="flex items-center gap-0.5">
-        <button
-          type="button"
-          onClick={() => onToggle(id)}
-          aria-expanded={!collapsed}
-          className="flex min-w-0 flex-1 items-center gap-1 rounded-md px-1.5 py-1 text-[11px] font-medium tracking-[0.07em] text-ink-faint uppercase transition-colors hover:text-ink"
-        >
-          <Chevron collapsed={collapsed} />
-          {label}
-        </button>
-        {action && (
-          <button
-            type="button"
-            onClick={action.onSelect}
-            aria-label={action.label}
-            title={action.label}
-            className="rounded-md p-1 text-ink-faint transition-colors hover:bg-hover hover:text-ink"
-          >
-            <PlusIcon />
-          </button>
-        )}
-      </div>
+      <SectionHeader label={label} collapsed={collapsed} onToggle={() => onToggle(id)} actions={actions} />
 
       {!collapsed && (
         <>
@@ -395,7 +392,8 @@ function Section({
                   <NoteRow
                     note={note}
                     active={pathname === `/n/${note.id}`}
-                    router={router}
+                    openNote={openNote}
+                    showDate={showDates}
                     renaming={renaming === note.id}
                     setRenaming={setRenaming}
                     openMenu={openMenu}
@@ -411,154 +409,11 @@ function Section({
   );
 }
 
-function NoteRow({
-  note,
-  active,
-  router,
-  renaming,
-  setRenaming,
-  openMenu,
-  onRename,
-}: {
-  note: NoteSummary;
-  active: boolean;
-  router: ReturnType<typeof useRouter>;
-  renaming: boolean;
-  setRenaming: (id: string | null) => void;
-  openMenu: (note: NoteSummary, x: number, y: number) => void;
-  onRename: (id: string, title: string) => void;
-}) {
-  const href = `/n/${note.id}`;
-  const isJournal = note.kind === "daily";
-
-  const displayTitle =
-    note.title ??
-    (isJournal && note.journalDate ? journalLabel(note.journalDate) : deriveTitle(note.preview));
-
-  if (renaming) {
-    return (
-      <div className="rounded-lg bg-active px-2.5 py-2 ring-1 ring-line-strong">
-        <RenameInput
-          initial={displayTitle}
-          onCommit={(value) => {
-            onRename(note.id, value);
-            setRenaming(null);
-          }}
-          onCancel={() => setRenaming(null)}
-        />
-      </div>
-    );
-  }
-
+function TodayIcon() {
   return (
-    <div className="group relative">
-      <Link
-        href={href}
-        onContextMenu={(event) => {
-          event.preventDefault();
-          openMenu(note, event.clientX, event.clientY);
-        }}
-        /*
-         * Dynamic routes aren't prefetched by <Link> automatically, so warm the
-         * payload on intent — by the time the click lands the note is usually
-         * already in the router cache.
-         */
-        onMouseEnter={() => router.prefetch(href)}
-        onTouchStart={() => router.prefetch(href)}
-        className={`block rounded-lg py-2 pr-8 pl-2.5 transition-colors ${
-          active ? "bg-active" : "hover:bg-hover"
-        } ${note.deletedAt ? "opacity-55" : ""}`}
-      >
-        <span className="flex items-center gap-1.5">
-          {note.pinnedAt && <PinIcon className="h-3 w-3 shrink-0 text-ink-faint" />}
-          <span className="truncate text-[13.5px]">{displayTitle}</span>
-        </span>
-      </Link>
-
-      {/*
-       * Touch devices have no right-click, so the menu needs a visible handle.
-       * It stays out of the way on pointer devices until the row is hovered.
-       */}
-      <button
-        type="button"
-        aria-label={`Actions for ${displayTitle}`}
-        onClick={(event) => {
-          event.preventDefault();
-          const rect = event.currentTarget.getBoundingClientRect();
-          openMenu(note, rect.left, rect.bottom + 4);
-        }}
-        className="absolute top-1/2 right-1 -translate-y-1/2 rounded-md p-1 text-ink-faint transition-opacity hover:bg-hover hover:text-ink focus-visible:opacity-100 md:opacity-0 md:group-hover:opacity-100"
-      >
-        <DotsIcon />
-      </button>
-    </div>
-  );
-}
-
-/**
- * Commits on Enter or blur, cancels on Escape.
- *
- * The settled flag matters: without it the blur that follows Enter or Escape
- * fires a second time, which made Escape save the edit it was meant to discard.
- */
-function RenameInput({
-  initial,
-  onCommit,
-  onCancel,
-}: {
-  initial: string;
-  onCommit: (value: string) => void;
-  onCancel: () => void;
-}) {
-  const settled = useRef(false);
-
-  function finish(value: string | null) {
-    if (settled.current) return;
-    settled.current = true;
-    if (value === null) onCancel();
-    else onCommit(value);
-  }
-
-  return (
-    <input
-      autoFocus
-      defaultValue={initial}
-      aria-label="Note name"
-      onFocus={(event) => event.currentTarget.select()}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          finish(event.currentTarget.value);
-        } else if (event.key === "Escape") {
-          event.preventDefault();
-          finish(null);
-        }
-      }}
-      onBlur={(event) => finish(event.currentTarget.value)}
-      className="w-full bg-transparent text-[13.5px] text-ink outline-none"
-    />
-  );
-}
-
-function DotsIcon() {
-  return (
-    <svg viewBox="0 0 16 16" className="h-4 w-4" fill="currentColor" aria-hidden="true">
-      <circle cx="4" cy="8" r="1.35" />
-      <circle cx="8" cy="8" r="1.35" />
-      <circle cx="12" cy="8" r="1.35" />
-    </svg>
-  );
-}
-
-function Chevron({ collapsed }: { collapsed: boolean }) {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      className={`h-3 w-3 shrink-0 transition-transform ${collapsed ? "-rotate-90" : ""}`}
-      fill="none"
-      aria-hidden="true"
-    >
-      <path d="M4 6.5 8 10.5l4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
+      <rect x="2.5" y="3.5" width="11" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M2.5 6.5h11M5.5 2v3M10.5 2v3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
     </svg>
   );
 }
@@ -572,10 +427,25 @@ function DashboardIcon() {
   );
 }
 
-function PlusIcon() {
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="none" aria-hidden="true">
+      <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.4" />
+      <path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ComposeIcon() {
   return (
     <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" aria-hidden="true">
-      <path d="M8 3.5v9M3.5 8h9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path
+        d="M7.5 3H4.5A1.5 1.5 0 0 0 3 4.5v7A1.5 1.5 0 0 0 4.5 13h7a1.5 1.5 0 0 0 1.5-1.5v-3"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+      />
+      <path d="m7 9 .4-1.9L12 2.5 13.5 4 8.9 8.6z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
     </svg>
   );
 }

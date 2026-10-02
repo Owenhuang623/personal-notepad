@@ -3,7 +3,8 @@ import { NextResponse } from "next/server";
 
 import { getDb } from "@/db";
 import { notes } from "@/db/schema";
-import { purgeWhere, softDeleteWhere, structuralUpdateWhere } from "@/lib/notes";
+import { fileIntoFolderWhere, purgeWhere, softDeleteWhere, structuralUpdateWhere } from "@/lib/notes";
+import { isMissingFolder, isUuid } from "@/lib/validate";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -46,6 +47,7 @@ export async function PATCH(request: Request, { params }: Params) {
     title?: string | null;
     kind?: "saved" | "daily";
     journalDate?: string | null;
+    folderId?: string | null;
   } = {};
 
   if (typeof body?.content === "string") {
@@ -75,9 +77,18 @@ export async function PATCH(request: Request, { params }: Params) {
     }
     updates.kind = "daily";
     updates.journalDate = body.date;
+    // The journal is filed by date; a folder would only be a stale leftover.
+    updates.folderId = null;
   } else if (body?.move === "notes") {
     updates.kind = "saved";
     updates.journalDate = null;
+  }
+
+  if (body?.folderId !== undefined && body?.move === undefined) {
+    if (body.folderId !== null && !isUuid(body.folderId)) {
+      return NextResponse.json({ error: "folderId must be a folder id or null" }, { status: 400 });
+    }
+    updates.folderId = body.folderId;
   }
 
   if (Object.keys(updates).length === 0) {
@@ -94,19 +105,28 @@ export async function PATCH(request: Request, { params }: Params) {
     updates.kind !== undefined ||
     updates.pinnedAt !== undefined ||
     updates.deletedAt !== undefined ||
-    updates.title !== undefined;
+    updates.title !== undefined ||
+    updates.folderId !== undefined;
 
   try {
+    const filing = typeof updates.folderId === "string";
     const [updated] = await getDb()
       .update(notes)
       .set(updates)
-      .where(structural ? structuralUpdateWhere(id) : eq(notes.id, id))
+      .where(filing ? fileIntoFolderWhere(id) : structural ? structuralUpdateWhere(id) : eq(notes.id, id))
       .returning({ id: notes.id, updatedAt: notes.updatedAt });
 
-    if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    if (!updated) {
+      return filing
+        ? NextResponse.json({ error: "Only notes go in folders — the journal files itself by date" }, { status: 409 })
+        : NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
 
     return NextResponse.json({ updatedAt: updated.updatedAt.toISOString() });
   } catch (error) {
+    if (isMissingFolder(error)) {
+      return NextResponse.json({ error: "That folder doesn't exist" }, { status: 404 });
+    }
     if (isDuplicateDay(error)) {
       return NextResponse.json(
         { error: "That day already has a journal entry" },

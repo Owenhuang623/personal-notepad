@@ -3,9 +3,9 @@ import "server-only";
 import { and, desc, eq, isNotNull, isNull, notInArray, sql } from "drizzle-orm";
 
 import { getDb } from "@/db";
-import { notes, SINGLETON_KINDS, type Note } from "@/db/schema";
+import { folders, notes, SINGLETON_KINDS, type Note } from "@/db/schema";
+import { type FolderSummary } from "@/lib/folder-tree";
 
-/** What the sidebar needs: enough of the body to derive a title, nothing more. */
 export type NoteKind = "scratch" | "saved" | "daily";
 
 /** Kinds with exactly one row, reached by the dashboard rather than the list. */
@@ -22,12 +22,20 @@ type SingletonKind = (typeof SINGLETON_KINDS)[number];
  */
 export const listable = notInArray(notes.kind, [...SINGLETON_KINDS]);
 
+/**
+ * A note as the client holds it — the whole text, not a preview.
+ *
+ * Every note is sent to the browser up front (the lot is tens of kilobytes), so
+ * opening one is a lookup rather than a server round trip, and search runs over
+ * everything without asking the server anything.
+ */
 export type NoteSummary = {
   id: string;
   kind: NoteKind;
   title: string | null;
-  preview: string;
+  content: string;
   journalDate: string | null;
+  folderId: string | null;
   pinnedAt: string | null;
   deletedAt: string | null;
   createdAt: string;
@@ -45,39 +53,53 @@ export type NoteDetail = {
   updatedAt: string;
 };
 
-export async function listSavedNotes(): Promise<NoteSummary[]> {
-  const rows = await getDb()
-    .select({
-      id: notes.id,
-      kind: notes.kind,
-      title: notes.title,
-      preview: sql<string>`substring(${notes.content} from 1 for 200)`,
-      journalDate: notes.journalDate,
-      pinnedAt: notes.pinnedAt,
-      deletedAt: notes.deletedAt,
-      createdAt: notes.createdAt,
-      updatedAt: notes.updatedAt,
-    })
-    .from(notes)
-    // Everything but the singletons; the sidebar splits these into sections.
-    .where(listable)
-    // Pinned first (nulls sort last), most recently pinned at the top of that
-    // group; everything else falls back to most recently edited.
-    .orderBy(
-      sql`${notes.deletedAt} is not null`,
-      sql`${notes.pinnedAt} is null`,
-      desc(notes.pinnedAt),
-      sql`${notes.journalDate} desc nulls last`,
-      desc(notes.updatedAt),
-    );
+/**
+ * Everything the sidebar draws — every listable note, and the folder tree.
+ *
+ * Sent as one batch: the Neon HTTP driver bills a round trip per statement,
+ * and this runs on every page load.
+ */
+export async function listSidebar(): Promise<{ notes: NoteSummary[]; folders: FolderSummary[] }> {
+  const db = getDb();
+  const [rows, folderRows] = await db.batch([
+    db
+      .select({
+        id: notes.id,
+        kind: notes.kind,
+        title: notes.title,
+        content: notes.content,
+        journalDate: notes.journalDate,
+        folderId: notes.folderId,
+        pinnedAt: notes.pinnedAt,
+        deletedAt: notes.deletedAt,
+        createdAt: notes.createdAt,
+        updatedAt: notes.updatedAt,
+      })
+      .from(notes)
+      // Everything but the singletons; the sidebar splits these into sections.
+      .where(listable)
+      // Pinned first (nulls sort last), most recently pinned at the top of that
+      // group; everything else falls back to most recently edited.
+      .orderBy(
+        sql`${notes.deletedAt} is not null`,
+        sql`${notes.pinnedAt} is null`,
+        desc(notes.pinnedAt),
+        sql`${notes.journalDate} desc nulls last`,
+        desc(notes.updatedAt),
+      ),
+    db.select({ id: folders.id, name: folders.name, parentId: folders.parentId }).from(folders),
+  ]);
 
-  return rows.map((row) => ({
-    ...row,
-    pinnedAt: row.pinnedAt?.toISOString() ?? null,
-    deletedAt: row.deletedAt?.toISOString() ?? null,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-  }));
+  return {
+    notes: rows.map((row) => ({
+      ...row,
+      pinnedAt: row.pinnedAt?.toISOString() ?? null,
+      deletedAt: row.deletedAt?.toISOString() ?? null,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    })),
+    folders: folderRows,
+  };
 }
 
 /**
@@ -102,18 +124,6 @@ export function getScratchNote(): Promise<NoteDetail> {
   return getSingletonNote("scratch");
 }
 
-export async function getSavedNote(id: string): Promise<NoteDetail | null> {
-  const [row] = await getDb()
-    .select()
-    .from(notes)
-    // The scratchpad lives on the dashboard; /n/<id> must not become a second
-    // way in, where it would be shown a Delete button that can't apply to it.
-    .where(and(eq(notes.id, id), listable))
-    .limit(1);
-
-  return row ? toDetail(row) : null;
-}
-
 /*
  * The `where` clause of every destructive path, in one place.
  *
@@ -125,6 +135,14 @@ export async function getSavedNote(id: string): Promise<NoteDetail | null> {
 /** Renaming, pinning, moving, trashing — anything but editing the text. */
 export function structuralUpdateWhere(id: string) {
   return and(eq(notes.id, id), listable);
+}
+
+/**
+ * Filing a note into a folder. Only saved notes: journal entries are filed by
+ * their date, in a section of their own, and never sit in a folder.
+ */
+export function fileIntoFolderWhere(id: string) {
+  return and(structuralUpdateWhere(id), eq(notes.kind, "saved"));
 }
 
 /** Trashing a note. Refuses a row that is already in the trash, and singletons. */
@@ -151,8 +169,9 @@ export function toSummary(row: Note): NoteSummary {
     id: row.id,
     kind: row.kind,
     title: row.title,
-    preview: row.content.slice(0, 200),
+    content: row.content,
     journalDate: row.journalDate,
+    folderId: row.folderId,
     pinnedAt: row.pinnedAt?.toISOString() ?? null,
     deletedAt: row.deletedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),

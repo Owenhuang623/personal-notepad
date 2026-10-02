@@ -5,9 +5,18 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 export type MenuItem = {
   label: string;
   onSelect: () => void;
+  /** Needed when two items can share a label — two folders with the same name. */
+  key?: string;
   danger?: boolean;
   /** Arms on the first click and only fires on the second. For anything irreversible. */
   confirm?: boolean;
+  /** Shown but not clickable — where a note already is, in the move picker. */
+  disabled?: boolean;
+  /** Nesting level, for items that stand for folders. */
+  indent?: number;
+  icon?: React.ReactNode;
+  /** Draws a rule above this item. */
+  separated?: boolean;
 };
 
 /**
@@ -75,33 +84,39 @@ export function ContextMenu({
     <div
       ref={menu}
       role="menu"
-      style={{ left: position.x, top: position.y }}
-      className="fixed z-50 min-w-[168px] overflow-hidden rounded-lg border border-line bg-panel py-1 shadow-lg shadow-black/5"
+      style={{ left: position.x, top: position.y, boxShadow: "var(--shadow)" }}
+      className="np-pop fixed z-50 max-h-[min(420px,70vh)] min-w-[180px] max-w-[280px] overflow-y-auto rounded-lg border border-line bg-canvas p-1"
     >
       {items.map((item) => {
-        const isArmed = armed === item.label;
+        const id = item.key ?? item.label;
+        const isArmed = armed === id;
 
         return (
+          <div key={id}>
+            {item.separated && <div className="mx-1.5 my-1 h-px bg-line" />}
           <button
-            key={item.label}
             type="button"
             role="menuitem"
+            disabled={item.disabled}
             onClick={() => {
               // An irreversible action sits one click away from a harmless one;
               // the first click only arms it.
               if (item.confirm && !isArmed) {
-                setArmed(item.label);
+                setArmed(id);
                 return;
               }
               onClose();
               item.onSelect();
             }}
-            className={`block w-full px-3 py-1.5 text-left text-[13px] transition-colors hover:bg-hover ${
+            style={item.indent ? { paddingLeft: `${0.625 + item.indent * 0.875}rem` } : undefined}
+            className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] transition-colors enabled:hover:bg-hover disabled:text-ink-faint ${
               item.danger ? "text-danger" : "text-ink"
             } ${isArmed ? "bg-hover font-medium" : ""}`}
           >
-            {isArmed ? "Click again to confirm" : item.label}
+            {item.icon && <span className="shrink-0 text-ink-faint">{item.icon}</span>}
+            <span className="min-w-0 flex-1 truncate">{isArmed ? "Click again to confirm" : item.label}</span>
           </button>
+          </div>
         );
       })}
     </div>

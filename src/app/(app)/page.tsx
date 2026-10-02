@@ -33,8 +33,7 @@ export default async function DashboardPage() {
         kind="scratch"
         initialContent={note.content}
         initialPinned={note.pinnedAt !== null}
-        title={note.title}
-        journalDate={note.journalDate}
+          journalDate={note.journalDate}
       />
     </>
   );

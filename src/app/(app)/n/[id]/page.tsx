@@ -1,26 +1,8 @@
-import { notFound } from "next/navigation";
-
-import { Editor } from "@/components/Editor";
-import { deriveTitle } from "@/lib/format";
-import { getSavedNote } from "@/lib/notes";
-
-export const dynamic = "force-dynamic";
-
-type Props = { params: Promise<{ id: string }> };
-
-export async function generateMetadata({ params }: Props) {
-  const { id } = await params;
-  const note = await getSavedNote(id);
-
-  if (!note) return { title: "Note" };
-  return { title: note.title ?? (note.journalDate ? `Journal — ${note.journalDate}` : deriveTitle(note.content)) };
-}
-
-export default async function NotePage({ params }: Props) {
-  const { id } = await params;
-  const note = await getSavedNote(id);
-
-  if (!note) notFound();
-
-  return <Editor key={note.id} noteId={note.id} kind={note.kind} initialContent={note.content} initialPinned={note.pinnedAt !== null} title={note.title} journalDate={note.journalDate} />;
+/**
+ * Renders nothing: AppShell draws the open note from the list it already holds,
+ * so a note never waits on a server render. The route exists so that /n/<id>
+ * resolves on a reload or a shared link — the layout sends every note along.
+ */
+export default function NotePage() {
+  return null;
 }

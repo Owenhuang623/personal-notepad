@@ -74,7 +74,36 @@ route — one expression, one test, no second copy to drift.
   `content` is mutable: renaming, pinning, moving or deleting it is rejected,
   because the dashboard would then lazily create a fresh empty row and strand
   the writing behind it. It is excluded from the sidebar list and from `/n/:id`.
-- `title` is optional; when null the title derives from the first non-empty line.
+- `title` is optional; when null the title derives from the first line with
+  words on it, markdown stripped (`plainLine` in `lib/format.ts`).
+- The layout sends every listable note *with its full text* to the browser
+  (tens of KB). `AppShell` holds them; opening a note is `history.pushState`
+  plus a lookup, never a server render — that round trip was the app's main
+  lag. `/n/[id]/page.tsx` renders nothing; `NoteView` draws the note. The
+  route's own page stays mounted (hidden) while a note is open, because
+  remounting the dashboard would rebuild the scratchpad from stale cached text.
+  A refresh never overwrites a note's text while it has unsaved keystrokes or
+  a newer `updatedAt` than the server sent (`merge` in `AppShell`).
+- Editor rendering is Bear-style (`editor/livePreview.ts`): block markers —
+  headings, bullets, task boxes, quotes — are always drawn and atomic, never
+  revealed by the cursor, so text doesn't jump; Backspace right after one
+  deletes it whole (`deleteMarkerBackward`). Inline marks reveal only when
+  the cursor touches that element. `markdown()` is created with
+  `addKeymap: false` so these keys aren't pre-empted.
+- `==highlight==` and `#tags` are parsed by `editor/syntax.ts`; tags have no
+  table — they're read out of the text (`lib/tags.ts`).
+- Folders (`folders` table, `notes.folder_id`) are for saved notes only and
+  nest to any depth. Deleting a folder moves its notes and subfolders up to
+  its parent first (`lib/folders.ts`, tested in `notes-guards.test.ts`), and
+  both foreign keys are `on delete set null` as a backstop: no folder
+  operation may ever delete a note. Moves are refused if they'd put a folder
+  inside itself (`canMoveFolder` in `lib/folder-tree.ts`, checked on both ends).
+- The journal is its own section and files itself: year → month → one entry
+  per day, derived from `journal_date` by `groupJournal` (`lib/journal.ts`).
+  Those year and month folders are never stored — don't add rows for them.
+  Journal entries never carry a `folder_id`; `fileIntoFolderWhere` refuses it.
+- Backups and `/api/export` are format 3 and include `folders`; the backup's
+  `markdown/` mirrors the folder tree on disk.
 - Dates that represent a *day* (journal entries) are computed in the browser.
   The server runs in UTC and would misfile anything written late in the evening.
 - Client components render dates only after mount, via `ClientDate`, for the

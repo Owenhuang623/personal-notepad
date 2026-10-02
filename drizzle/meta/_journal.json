@@ -50,6 +50,13 @@
       "when": 1788812786187,
       "tag": "0006_panoramic_toad_men",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790967657929,
+      "tag": "0007_little_sister_grimm",
+      "breakpoints": true
     }
   ]
 }

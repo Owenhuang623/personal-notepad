@@ -3,7 +3,7 @@
  *
  *   npm run backup
  *
- * Three forms, on purpose: notes.json is the exact contents of both tables and
+ * Three forms, on purpose: notes.json is the exact contents of every table and
  * is what a restore would read; the markdown/ folder is the same text in files
  * any editor can open; and work.csv is the hours in a shape a spreadsheet
  * understands. The backup stays useful even if this app is gone.
@@ -23,6 +23,7 @@ if (!url) {
 const sql = neon(url);
 const rows = await sql`select * from notes order by created_at desc`;
 const sessions = await sql`select * from work_sessions order by local_date, started_at`;
+const folders = await sql`select * from folders order by created_at`;
 
 const stamp = new Date().toISOString().replace(/:/g, "-").slice(0, 16);
 const dir = path.join("backups", stamp);
@@ -33,11 +34,12 @@ await fs.writeFile(
   JSON.stringify(
     {
       exportedAt: new Date().toISOString(),
-      // Bumped when work_sessions joined the backup. A format 1 file has notes
-      // and no hours; a reader should not mistake that for a week of zeros.
-      format: 2,
+      // 2 added work_sessions; 3 added folders (and notes.folder_id). A format
+      // 2 file has no folders, which a reader should take as "all top level".
+      format: 3,
       count: rows.length,
       notes: rows,
+      folders,
       workSessions: sessions,
     },
     null,
@@ -66,8 +68,27 @@ function slug(row) {
   return `${row.kind}-${safe || "untitled"}-${row.id.slice(0, 8)}.md`;
 }
 
+/** A folder name that is safe as a directory name everywhere, still readable. */
+function dirName(name) {
+  return name.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, "-").replace(/^\.+/, "").trim().slice(0, 64) || "folder";
+}
+
+/** The directory path of a folder, from the top down. Stops on a corrupt cycle. */
+const byId = new Map(folders.map((folder) => [folder.id, folder]));
+function folderDirs(id) {
+  const parts = [];
+  const seen = new Set();
+  for (let folder = byId.get(id); folder && !seen.has(folder.id); folder = byId.get(folder.parent_id)) {
+    seen.add(folder.id);
+    parts.unshift(dirName(folder.name));
+  }
+  return parts;
+}
+
 for (const row of rows) {
-  await fs.writeFile(path.join(dir, "markdown", slug(row)), row.content);
+  const where = path.join(dir, "markdown", ...(row.folder_id ? folderDirs(row.folder_id) : []));
+  await fs.mkdir(where, { recursive: true });
+  await fs.writeFile(path.join(where, slug(row)), row.content);
 }
 
 /*
@@ -97,7 +118,7 @@ const seconds = sessions.reduce((total, row) => total + row.duration_seconds, 0)
 const open = sessions.filter((row) => !row.ended_at).length;
 
 console.log(
-  `Backed up ${rows.length} notes (${trashed} in trash) and ` +
+  `Backed up ${rows.length} notes (${trashed} in trash), ${folders.length} folders and ` +
     `${sessions.length} work sessions (${(seconds / 3600).toFixed(1)}h` +
     `${open ? `, ${open} still running` : ""}) to ${dir}`,
 );

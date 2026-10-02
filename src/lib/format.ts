@@ -1,12 +1,33 @@
-/** A note's title is just its first non-empty line. No separate title field to keep in sync. */
+/**
+ * A note's title is just its first line with any words on it. No separate title
+ * field to keep in sync.
+ *
+ * Markdown is stripped on the way: the editor draws `### Meeting` as a heading,
+ * so the list should say "Meeting" rather than show the hashes the editor hides.
+ */
 export function deriveTitle(content: string): string {
   const line = content
     .split("\n")
-    .map((l) => l.trim())
+    .map(plainLine)
     .find(Boolean);
 
   if (!line) return "Untitled";
   return line.length > 64 ? `${line.slice(0, 64).trimEnd()}…` : line;
+}
+
+/** One line of markdown as plain text; empty for lines that are only syntax (rules, fences). */
+export function plainLine(line: string): string {
+  return line
+    .trim()
+    .replace(/^(?:`{3,}|~{3,}).*$/, "")
+    .replace(/^(?:[-*_]\s*){3,}$/, "")
+    .replace(/^#{1,6}(?:\s+|$)/, "")
+    .replace(/^(?:>\s?)+/, "")
+    .replace(/^(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, "")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__|~~|==|`)(.+?)\1/g, "$2")
+    .replace(/(^|\W)[*_](\S(?:.*?\S)?)[*_](?=\W|$)/g, "$1$2")
+    .trim();
 }
 
 export function countWords(text: string): number {

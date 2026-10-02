@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { countWords, deriveTitle } from "@/lib/format";
+import { countWords } from "@/lib/format";
 
 import { useNotes, useSidebar } from "./AppShell";
 import { ClientDate } from "./ClientDate";
@@ -38,27 +38,33 @@ export function Editor({
   kind,
   initialContent,
   initialPinned,
-  title,
   journalDate,
+  trashed = false,
 }: {
   noteId: string;
   kind: "scratch" | "saved" | "daily";
   initialContent: string;
   initialPinned: boolean;
-  title: string | null;
   journalDate: string | null;
+  trashed?: boolean;
 }) {
+  /*
+   * The text this editor opened with, frozen. The parent re-renders with every
+   * keystroke (the list in memory follows the typing), and the draft check
+   * below must compare against what was loaded, not against itself.
+   */
+  const [loaded] = useState(initialContent);
   const [content, setContent] = useState(initialContent);
   const [status, setStatus] = useState<Status>("saved");
   const [pinned, setPinned] = useState(initialPinned);
 
-  const contentRef = useRef(initialContent);
-  const savedRef = useRef(initialContent);
+  const contentRef = useRef(loaded);
+  const savedRef = useRef(loaded);
   const editorRef = useRef<MarkdownEditorHandle | null>(null);
   const [editorReady, setEditorReady] = useState(false);
 
-  const { refresh, updatePreview } = useNotes();
-  const { setOpen } = useSidebar();
+  const { refresh, updateContent, markSaved } = useNotes();
+  const { setOpen, openSearch } = useSidebar();
   const router = useRouter();
 
   const draftKey = `np:draft:${noteId}`;
@@ -90,15 +96,17 @@ export function Editor({
         keepalive: true,
       });
       if (!response.ok) throw new Error(`Save failed: ${response.status}`);
+      const { updatedAt } = (await response.json()) as { updatedAt: string };
 
       savedRef.current = value;
+      if (contentRef.current === value) markSaved(noteId, updatedAt);
       window.localStorage.removeItem(draftKey);
       // Only clear the indicator if nothing was typed while the request was in flight.
       setStatus(contentRef.current === value ? "saved" : "dirty");
     } catch {
       setStatus("error");
     }
-  }, [noteId, draftKey]);
+  }, [noteId, draftKey, markSaved]);
 
   /**
    * A draft in localStorage means a previous save never landed — the tab closed
@@ -106,11 +114,12 @@ export function Editor({
    */
   useEffect(() => {
     const draft = window.localStorage.getItem(draftKey);
-    if (draft !== null && draft !== initialContent) {
+    if (draft !== null && draft !== loaded) {
       applyContent(draft);
       setStatus("dirty");
+      if (!singleton) updateContent(noteId, draft);
     }
-  }, [draftKey, initialContent, applyContent]);
+  }, [draftKey, loaded, applyContent, singleton, updateContent, noteId]);
 
   useEffect(() => {
     if (content === savedRef.current) return;
@@ -156,7 +165,7 @@ export function Editor({
     applyContent(value);
     setStatus("dirty");
     window.localStorage.setItem(draftKey, value);
-    if (!singleton) updatePreview(noteId, value);
+    if (!singleton) updateContent(noteId, value);
   }
 
   async function togglePin() {
@@ -187,19 +196,29 @@ export function Editor({
     router.push("/");
   }
 
+  async function restoreNote() {
+    const response = await fetch(`/api/notes/${noteId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ restore: true }),
+    });
+    if (response.ok) await refresh();
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/*
-        * The scratchpad has no header of its own.
+        * The scratchpad has no header of its own: on the dashboard the timer
+        * bar above it is already a full-width row of chrome. Its save state
+        * sits in the corner of the page instead; see `SaveState`.
         *
-        * On the dashboard the timer bar above it is already a full-width row of
-        * chrome, and a second one underneath saying "Scratchpad" — a page with
-        * one writing surface on it — was labelling the obvious and costing the
-        * writing 56px. Its save state moved into the corner of the page below;
-        * see `statusLabel`.
+        * A note's header carries no title either. The first line of the note
+        * is the title, drawn as one just below — repeating it in a
+        * bordered bar was the heaviest thing on the page. What's left is a few
+        * quiet controls floating over the paper.
         */}
       {!singleton && (
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line px-3 sm:px-5">
+        <header className="flex h-12 shrink-0 items-center gap-1 px-3 sm:px-4">
           <button
             type="button"
             onClick={() => setOpen(true)}
@@ -209,50 +228,66 @@ export function Editor({
             <MenuIcon />
           </button>
 
-          <h1 className="min-w-0 flex-1 truncate text-[13.5px] font-medium">
-            {title ??
-              (journalDate ? <ClientDate iso={journalDate} variant="journal" /> : deriveTitle(content))}
-          </h1>
+          {trashed && (
+            <span className="ml-1 rounded-full bg-hover px-2.5 py-1 text-[12px] text-ink-muted">
+              In the trash
+            </span>
+          )}
 
-          <span className="shrink-0 text-[12px] tabular-nums text-ink-faint">
-            {statusLabel(status)}
-          </span>
+          <div className="flex-1" />
 
-          <button
-            type="button"
-            onClick={() => void togglePin()}
-            title={pinned ? "Unpin from the sidebar" : "Pin to the top of the sidebar"}
-            className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors hover:bg-hover ${
-              pinned ? "text-ink" : "text-ink-muted hover:text-ink"
-            }`}
-          >
-            <PinIcon className="h-3.5 w-3.5" />
-            {pinned ? "Pinned" : "Pin"}
-          </button>
-          <ConfirmButton label="Delete" confirmLabel="Confirm" onConfirm={() => void deleteNote()} />
+          <SaveState status={status} />
+
+          {trashed ? (
+            <button
+              type="button"
+              onClick={() => void restoreNote()}
+              className="rounded-md px-2.5 py-1.5 text-[13px] text-ink-muted transition-colors hover:bg-hover hover:text-ink"
+            >
+              Restore
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => void togglePin()}
+                aria-pressed={pinned}
+                aria-label={pinned ? "Unpin" : "Pin"}
+                title={pinned ? "Unpin from the sidebar" : "Pin to the top of the sidebar"}
+                className={`rounded-md p-2 transition-colors hover:bg-hover ${
+                  pinned ? "text-accent" : "text-ink-faint hover:text-ink"
+                }`}
+              >
+                <PinIcon className="h-[15px] w-[15px]" />
+              </button>
+              <ConfirmButton label="Delete" confirmLabel="Move to trash?" onConfirm={() => void deleteNote()} />
+            </>
+          )}
         </header>
       )}
 
       <div className="relative min-h-0 flex-1">
-        <div className="mx-auto flex h-full w-full max-w-[46rem] flex-col px-5 sm:px-8">
+        <div className="mx-auto flex h-full w-full max-w-[44rem] flex-col px-6 sm:px-10">
           {/* Only journal entries get a dateline; a regular note is about its
               contents, not the day it happened to be started. */}
           {journalDate && (
-            <p className="shrink-0 pt-7 text-[12px] text-ink-faint">
+            <p className="shrink-0 pt-4 text-[12.5px] font-medium tracking-wide text-ink-faint uppercase">
               <ClientDate iso={journalDate} variant="journalLong" />
             </p>
           )}
 
-          <div className={`min-h-0 flex-1 ${journalDate ? "pt-3" : "pt-8"}`}>
+          <div className={`min-h-0 flex-1 ${journalDate ? "pt-3" : singleton ? "pt-10" : "pt-4"}`}>
             {/* The stand-in is positioned against this box, not the padded one
                 outside it, so the first line sits exactly where CodeMirror
-                will put it. */}
-            <div className="relative h-full">
+                will put it. The negative margin hands the editor a strip of
+                the page's padding to hang heading marks in. */}
+            <div className="np-editor relative h-full">
               <MarkdownEditor
                 value={content}
                 onChange={handleChange}
                 autoFocus
                 placeholder={PLACEHOLDERS[kind]}
+                onTag={(tag) => openSearch(`#${tag}`)}
                 onReady={(handle) => {
                   editorRef.current = handle;
                   setEditorReady(true);
@@ -264,16 +299,15 @@ export function Editor({
           </div>
         </div>
 
-        {/* Sits in the padding above the first line, so it never crowds the text. */}
         {singleton && (
-          <p className="pointer-events-none absolute right-4 top-3 text-[11.5px] tabular-nums text-ink-faint select-none">
-            {statusLabel(status)}
-          </p>
+          <div className="pointer-events-none absolute right-4 top-3">
+            <SaveState status={status} />
+          </div>
         )}
 
         {wordCount > 0 && (
-          <p className="pointer-events-none absolute bottom-3 right-4 text-[11.5px] tabular-nums text-ink-faint select-none">
-            {wordCount === 1 ? "1 word" : `${wordCount} words`}
+          <p className="pointer-events-none absolute bottom-3 right-4 rounded-full bg-canvas/80 px-2 py-0.5 text-[11.5px] tabular-nums text-ink-faint backdrop-blur-sm select-none">
+            {wordCount === 1 ? "1 word" : `${wordCount.toLocaleString()} words`}
           </p>
         )}
       </div>
@@ -290,24 +324,43 @@ function StaticText({ text }: { text: string }) {
   return (
     <div
       aria-hidden
-      className="pointer-events-none absolute inset-0 overflow-hidden font-sans text-[15px] leading-[1.75] whitespace-pre-wrap text-ink"
+      className="np-static pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap text-ink"
     >
       {text}
     </div>
   );
 }
 
-function statusLabel(status: Status): string {
-  switch (status) {
-    case "saving":
-      return "Saving…";
-    case "dirty":
-      return "Unsaved";
-    case "error":
-      return "Offline · kept locally";
-    default:
-      return "Saved";
+/**
+ * Saving is the normal state of things, so it isn't announced. A small dot
+ * says the latest words haven't reached the server yet; it goes away on its
+ * own a moment later. Only a failure gets words, because only a failure asks
+ * anything of you.
+ */
+function SaveState({ status }: { status: Status }) {
+  if (status === "error") {
+    return (
+      <span className="px-2 text-[12px] text-danger" role="status">
+        Offline · kept on this device
+      </span>
+    );
   }
+
+  const pending = status === "dirty" || status === "saving";
+  return (
+    <span
+      role="status"
+      aria-label={pending ? "Saving" : "Saved"}
+      title={pending ? "Saving…" : "Saved"}
+      className="flex h-6 w-6 items-center justify-center"
+    >
+      <span
+        className={`h-1.5 w-1.5 rounded-full bg-ink-faint transition-opacity duration-500 ${
+          pending ? "opacity-100" : "opacity-0"
+        }`}
+      />
+    </span>
+  );
 }
 
 function MenuIcon() {

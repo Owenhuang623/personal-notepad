@@ -8,46 +8,59 @@ import {
   type DecorationSet,
   type ViewUpdate,
 } from "@codemirror/view";
+import { type SyntaxNode } from "@lezer/common";
 
 /**
- * Obsidian-style live preview.
+ * Live preview, in the manner of Bear.
  *
- * Markdown syntax is hidden and the text renders as formatting, except on the
- * line the cursor is on — there the raw characters come back so they can be
- * edited. This works here (and not over a textarea) because CodeMirror renders
- * the document itself, so replacing a range with nothing, or with a checkbox
- * widget, reflows honestly instead of desynchronising from a hidden input.
+ * Markdown renders as formatting while you write. There are two rules for when
+ * the raw characters come back:
+ *
+ * - **Block markers never do.** Headings, bullets, checkboxes and quotes stay
+ *   drawn even on the line being edited. The earlier version revealed the
+ *   whole line the cursor sat on, which made the text jump sideways every time
+ *   the cursor arrived — the single most "un-premium" thing about the editor.
+ *   Each marker is atomic instead: Backspace at the start of a heading or list
+ *   item deletes the marker whole and leaves a plain line, which is what you
+ *   meant. Heading hashes hang in the left margin, so the heading's first
+ *   letter lines up with the body text and never moves.
+ *
+ * - **Inline markers do, but only their own.** `**`, `_`, `~~`, `==`, backticks
+ *   and link syntax appear when the cursor touches that one element, so bold on
+ *   one side of a sentence stays rendered while you edit italics on the other.
  */
 
 class CheckboxWidget extends WidgetType {
   constructor(
     readonly checked: boolean,
-    readonly from: number,
+    readonly box: number,
   ) {
     super();
   }
 
   eq(other: CheckboxWidget) {
-    return other.checked === this.checked && other.from === this.from;
+    return other.checked === this.checked && other.box === this.box;
   }
 
   toDOM(view: EditorView) {
+    const wrap = document.createElement("span");
+    wrap.className = "cm-marker";
+
     const box = document.createElement("span");
     box.className = `cm-task-checkbox${this.checked ? " is-checked" : ""}`;
     box.setAttribute("role", "checkbox");
     box.setAttribute("aria-checked", String(this.checked));
+    wrap.appendChild(box);
 
-    // mousedown rather than click: the editor would otherwise move the cursor
-    // into the line first, which un-hides the syntax and removes this widget
-    // before the click completes.
+    // mousedown rather than click, so the editor doesn't move the cursor first.
     box.addEventListener("mousedown", (event) => {
       event.preventDefault();
       view.dispatch({
-        changes: { from: this.from, to: this.from + 3, insert: this.checked ? "[ ]" : "[x]" },
+        changes: { from: this.box, to: this.box + 3, insert: this.checked ? "[ ]" : "[x]" },
       });
     });
 
-    return box;
+    return wrap;
   }
 
   ignoreEvent() {
@@ -55,32 +68,53 @@ class CheckboxWidget extends WidgetType {
   }
 }
 
-class BulletWidget extends WidgetType {
-  eq() {
-    return true;
+/** A bullet or a number, in a fixed-width box the item's wrapped lines align to. */
+class MarkerWidget extends WidgetType {
+  constructor(readonly text: string) {
+    super();
+  }
+
+  eq(other: MarkerWidget) {
+    return other.text === this.text;
   }
 
   toDOM() {
-    const dot = document.createElement("span");
-    dot.className = "cm-bullet";
-    dot.textContent = "•";
-    return dot;
+    const marker = document.createElement("span");
+    marker.className = this.text === "•" ? "cm-marker cm-bullet" : "cm-marker cm-ordinal";
+    marker.textContent = this.text;
+    return marker;
+  }
+}
+
+/** `##`, drawn out of flow to the left of the heading. */
+class HeadingMarkWidget extends WidgetType {
+  constructor(readonly level: number) {
+    super();
+  }
+
+  eq(other: HeadingMarkWidget) {
+    return other.level === this.level;
+  }
+
+  toDOM() {
+    const mark = document.createElement("span");
+    mark.className = "cm-heading-mark";
+    mark.textContent = "#".repeat(this.level);
+    mark.setAttribute("aria-hidden", "true");
+    return mark;
   }
 }
 
 /**
- * Whether the selection overlaps [from, to], counting the endpoints.
- *
- * Inclusive endpoints are what make this feel like Obsidian: a cursor resting
- * immediately after `**bold**` still counts as inside it, so the markers stay
- * visible while you're finishing the word. Type one more character — a space —
- * and the cursor clears the range and the text formats.
+ * Whether the selection overlaps [from, to], counting the endpoints — so a
+ * cursor resting just after `**bold**` still shows the markers while you're
+ * finishing the word. Type a space and the text formats.
  */
 function touches(state: EditorState, from: number, to: number): boolean {
   return state.selection.ranges.some((range) => range.from <= to && range.to >= from);
 }
 
-/** Every line touched by a cursor or selection — these render as raw markdown. */
+/** Every line touched by a cursor or selection. */
 function activeLines(state: EditorState): Set<number> {
   const lines = new Set<number>();
 
@@ -92,6 +126,17 @@ function activeLines(state: EditorState): Set<number> {
 
   return lines;
 }
+
+/** How many lists deep a list item sits; 1 for a top-level item. */
+function listDepth(item: SyntaxNode): number {
+  let depth = 0;
+  for (let node: SyntaxNode | null = item.parent; node; node = node.parent) {
+    if (node.name === "BulletList" || node.name === "OrderedList") depth++;
+  }
+  return Math.max(depth, 1);
+}
+
+const INLINE_MARKS = new Set(["EmphasisMark", "StrikethroughMark", "HighlightMark"]);
 
 function build(view: EditorView) {
   const { state } = view;
@@ -114,6 +159,11 @@ function build(view: EditorView) {
     atomic.push(deco.range(from, to));
   };
 
+  const lineClass = (pos: number, attributes: Record<string, string>) => {
+    const at = state.doc.lineAt(pos).from;
+    decorations.push(Decoration.line({ attributes }).range(at, at));
+  };
+
   /** Swallow one trailing space so hiding "# " doesn't leave the text indented. */
   const withTrailingSpace = (to: number) =>
     state.doc.sliceString(to, to + 1) === " " ? to + 1 : to;
@@ -128,98 +178,141 @@ function build(view: EditorView) {
 
         const heading = /^ATXHeading([1-6])$/.exec(node.name);
         if (heading) {
-          decorations.push(
-            Decoration.line({ class: `cm-h${heading[1]}` }).range(line.from, line.from),
-          );
+          lineClass(line.from, { class: `cm-h cm-h${heading[1]}` });
           return;
         }
 
-        if (node.name === "HeaderMark" && !isActive) {
-          hide(node.from, withTrailingSpace(node.to));
+        if (node.name === "HeaderMark") {
+          const parent = node.node.parent;
+          if (parent && parent.from === node.from) {
+            replaceWith(node.from, withTrailingSpace(node.to), new HeadingMarkWidget(node.to - node.from));
+          } else if (!isActive) {
+            // Optional closing hashes ("## Title ##") are clutter once rendered.
+            hide(node.from, node.to);
+          }
           return;
         }
 
         if (node.name === "ListItem") {
           const mark = node.node.getChild("ListMark");
-          // TaskMarker sits under an intermediate Task node — ListItem > Task >
-          // TaskMarker — so a direct getChild("TaskMarker") finds nothing.
+          if (!mark) return;
+
+          const markLine = state.doc.lineAt(mark.from);
+          // TaskMarker sits under an intermediate Task node: ListItem > Task > TaskMarker.
           const task = node.node.getChild("Task")?.getChild("TaskMarker") ?? null;
-          const markLine = mark ? state.doc.lineAt(mark.from).number : line.number;
-          const markActive = active.has(markLine);
+
+          /*
+           * Hanging indent. The line is padded by its depth and pulled back by
+           * one marker's width, so the marker sits in the padding and every
+           * wrapped line starts under the first word rather than under the
+           * bullet. The source's own leading spaces are hidden — depth comes
+           * from the tree, so mixed tabs and spaces still line up.
+           */
+          lineClass(markLine.from, {
+            class: task ? "cm-li cm-li-task" : "cm-li",
+            style: `--depth: ${listDepth(node.node)}`,
+          });
+          if (/^\s+$/.test(state.doc.sliceString(markLine.from, mark.from))) {
+            hide(markLine.from, mark.from);
+          }
 
           if (task) {
-            const checked = state.doc.sliceString(task.from, task.to).toLowerCase().includes("x");
-
-            if (!markActive) {
-              if (mark) hide(mark.from, withTrailingSpace(mark.to));
-              replaceWith(task.from, task.to, new CheckboxWidget(checked, task.from));
-            }
+            const checked = /x/i.test(state.doc.sliceString(task.from, task.to));
+            replaceWith(mark.from, withTrailingSpace(task.to), new CheckboxWidget(checked, task.from));
 
             if (checked) {
               const textFrom = withTrailingSpace(task.to);
               const textTo = state.doc.lineAt(task.to).to;
               if (textTo > textFrom) {
-                decorations.push(
-                  Decoration.mark({ class: "cm-task-done" }).range(textFrom, textTo),
-                );
+                decorations.push(Decoration.mark({ class: "cm-task-done" }).range(textFrom, textTo));
               }
             }
-          } else if (mark && !markActive) {
-            // Only unordered marks become bullets; "1." and "2)" carry meaning.
+          } else {
             const text = state.doc.sliceString(mark.from, mark.to);
-            if (/^[-*+]$/.test(text)) replaceWith(mark.from, mark.to, new BulletWidget());
+            replaceWith(
+              mark.from,
+              withTrailingSpace(mark.to),
+              new MarkerWidget(/^[-*+]$/.test(text) ? "•" : text),
+            );
           }
-
           return;
         }
 
         if (node.name === "HorizontalRule") {
-          decorations.push(Decoration.line({ class: "cm-hr" }).range(line.from, line.from));
+          lineClass(line.from, { class: "cm-hr" });
           if (!isActive) hide(line.from, line.to);
           return;
         }
 
-        if (node.name === "FencedCode") {
+        if (node.name === "Blockquote") {
           for (let pos = node.from; pos <= node.to; ) {
-            const codeLine = state.doc.lineAt(pos);
-            decorations.push(
-              Decoration.line({ class: "cm-codeblock" }).range(codeLine.from, codeLine.from),
-            );
-            if (codeLine.to >= node.to) break;
-            pos = codeLine.to + 1;
+            const quoteLine = state.doc.lineAt(pos);
+            lineClass(quoteLine.from, { class: "cm-quote" });
+            if (quoteLine.to >= node.to) break;
+            pos = quoteLine.to + 1;
           }
           return;
+        }
+
+        if (node.name === "QuoteMark") {
+          hide(node.from, withTrailingSpace(node.to));
+          return;
+        }
+
+        if (node.name === "FencedCode") {
+          const first = state.doc.lineAt(node.from).number;
+          const last = state.doc.lineAt(node.to).number;
+          for (let number = first; number <= last; number++) {
+            const codeLine = state.doc.line(number);
+            const edge = number === first ? " cm-code-first" : number === last ? " cm-code-last" : "";
+            const fence = number === first || (number === last && last > first) ? " cm-code-fence" : "";
+            lineClass(codeLine.from, { class: `cm-codeblock${edge}${fence}` });
+          }
+          return false;
         }
 
         // Leaves just the link text: the brackets, parens and URL all hide.
         if (node.name === "LinkMark" || node.name === "URL") {
           const parent = node.node.parent;
           const kind = parent?.name;
-          if (parent && (kind === "Link" || kind === "Image") && !touches(state, parent.from, parent.to)) {
-            hide(node.from, node.to);
+          if (parent && (kind === "Link" || kind === "Image")) {
+            if (!touches(state, parent.from, parent.to)) hide(node.from, node.to);
+          } else if (node.name === "URL") {
+            // A bare URL is a link too, and should look like one.
+            decorations.push(Decoration.mark({ class: "cm-bare-url" }).range(node.from, node.to));
           }
           return;
         }
 
-        if (node.name === "QuoteMark") {
-          decorations.push(Decoration.line({ class: "cm-quote" }).range(line.from, line.from));
-          if (!isActive) hide(node.from, withTrailingSpace(node.to));
+        if (node.name === "Link") {
+          const label = node.node.getChild("LinkMark");
+          const close = node.node.getChildren("LinkMark")[1];
+          if (label && close && close.from > label.to) {
+            decorations.push(Decoration.mark({ class: "cm-link-text" }).range(label.to, close.from));
+          }
           return;
         }
 
-        // Inline marks are scoped to their own element rather than the whole
-        // line, so bold on one side of a sentence stays rendered while you edit
-        // italics on the other.
-        if (node.name === "EmphasisMark" || node.name === "StrikethroughMark") {
+        if (node.name === "Hashtag") {
+          decorations.push(Decoration.mark({ class: "cm-hashtag" }).range(node.from, node.to));
+          return;
+        }
+
+        if (node.name === "InlineCode") {
+          decorations.push(Decoration.mark({ class: "cm-inline-code" }).range(node.from, node.to));
+          return;
+        }
+
+        if (INLINE_MARKS.has(node.name)) {
           const parent = node.node.parent;
           if (parent && !touches(state, parent.from, parent.to)) hide(node.from, node.to);
           return;
         }
 
-        // Only inline code — hiding the fences of a code block would be confusing.
+        // Only inline code — a code block's fences stay, so you can see where it ends.
         if (node.name === "CodeMark" && node.node.parent?.name === "InlineCode") {
           const parent = node.node.parent;
-          if (parent && !touches(state, parent.from, parent.to)) hide(node.from, node.to);
+          if (!touches(state, parent.from, parent.to)) hide(node.from, node.to);
         }
       },
     });
@@ -231,8 +324,27 @@ function build(view: EditorView) {
   };
 }
 
-export function livePreview(): Extension {
-  return ViewPlugin.fromClass(
+/** The URL under a position, for a link or a bare address. */
+function urlAt(state: EditorState, pos: number): string | null {
+  for (let node: SyntaxNode | null = syntaxTree(state).resolveInner(pos, 1); node; node = node.parent) {
+    if (node.name === "URL") return state.doc.sliceString(node.from, node.to);
+    if (node.name === "Link" || node.name === "Image") {
+      const url = node.getChild("URL");
+      return url ? state.doc.sliceString(url.from, url.to) : null;
+    }
+  }
+  return null;
+}
+
+/** The tag under a position, without its hash. */
+function tagAt(state: EditorState, pos: number): string | null {
+  const node = syntaxTree(state).resolveInner(pos, 1);
+  if (node.name !== "Hashtag") return null;
+  return state.doc.sliceString(node.from + 1, node.to);
+}
+
+export function livePreview({ onTag }: { onTag?: (tag: string) => void } = {}): Extension {
+  const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
       atomic: DecorationSet;
@@ -244,8 +356,6 @@ export function livePreview(): Extension {
       }
 
       update(update: ViewUpdate) {
-        // Selection matters as much as content here: moving the cursor onto a
-        // line is what reveals its syntax.
         if (update.docChanged || update.selectionSet || update.viewportChanged) {
           const built = build(update.view);
           this.decorations = built.decorations;
@@ -254,10 +364,61 @@ export function livePreview(): Extension {
       }
     },
     {
-      decorations: (plugin) => plugin.decorations,
+      decorations: (instance) => instance.decorations,
       // Without this the cursor can land inside hidden syntax and appear stuck.
-      provide: (plugin) =>
-        EditorView.atomicRanges.of((view) => view.plugin(plugin)?.atomic ?? Decoration.none),
+      provide: (instance) =>
+        EditorView.atomicRanges.of((view) => view.plugin(instance)?.atomic ?? Decoration.none),
     },
   );
+
+  /*
+   * ⌘-click (Ctrl-click elsewhere) follows a link or opens a tag. A plain
+   * click still just puts the cursor there — links in a document you're
+   * editing shouldn't steal clicks meant for the text.
+   */
+  const follow = EditorView.domEventHandlers({
+    mousedown(event, view) {
+      if (!(event.metaKey || event.ctrlKey) || event.button !== 0) return false;
+      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      if (pos === null) return false;
+
+      const url = urlAt(view.state, pos);
+      if (url) {
+        event.preventDefault();
+        const href = /^[a-z][a-z0-9+.-]*:/i.test(url) ? url : `https://${url}`;
+        window.open(href, "_blank", "noopener,noreferrer");
+        return true;
+      }
+
+      const tag = tagAt(view.state, pos);
+      if (tag && onTag) {
+        event.preventDefault();
+        onTag(tag);
+        return true;
+      }
+
+      return false;
+    },
+  });
+
+  // Holding ⌘ says "I'm about to follow something" — show it in the cursor.
+  const modifierClass = ViewPlugin.fromClass(
+    class {
+      constructor(readonly view: EditorView) {
+        window.addEventListener("keydown", this.sync);
+        window.addEventListener("keyup", this.sync);
+        window.addEventListener("blur", this.clear);
+      }
+      sync = (event: KeyboardEvent) =>
+        this.view.dom.classList.toggle("cm-follow", event.metaKey || event.ctrlKey);
+      clear = () => this.view.dom.classList.remove("cm-follow");
+      destroy() {
+        window.removeEventListener("keydown", this.sync);
+        window.removeEventListener("keyup", this.sync);
+        window.removeEventListener("blur", this.clear);
+      }
+    },
+  );
+
+  return [plugin, follow, modifierClass];
 }
