@@ -157,6 +157,7 @@ export const continueListTight: StateCommand = ({ state, dispatch }) => {
 const BULLET_ONLY = /^\s*[-+*]$/;
 const NUMBER_ONLY = /^\s*\d{1,9}[.)]$/;
 const TASK_ONLY = /^\s*[-+*] \[[ xX]\]$/;
+const HEADING_ONLY = /^ {0,3}#{2,6}$/;
 
 /**
  * Whether typing `typed` right after `before` (the line so far) should first
@@ -168,13 +169,16 @@ const TASK_ONLY = /^\s*[-+*] \[[ xX]\]$/;
  *   - bullets (-, +, *) react to a letter, or `[` to start a checkbox — not to
  *     digits or punctuation, so "-5°", "--", "---" and "**bold**" are left be;
  *   - numbers (1. or 1)) react only to a letter, so "1.5" stays a decimal;
- *   - a checkbox, "- [ ]", reacts to a letter or digit.
+ *   - a checkbox, "- [ ]", reacts to a letter or digit;
+ *   - a heading reacts to a letter or digit, but only from "##" up: "#word"
+ *     is a tag, so a level-one heading still needs its space typed.
  */
 export function needsMarkerSpace(before: string, typed: string): boolean {
   if (typed.length !== 1 && [...typed].length !== 1) return false;
   if (BULLET_ONLY.test(before)) return /^[\p{L}[]$/u.test(typed);
   if (NUMBER_ONLY.test(before)) return /^\p{L}$/u.test(typed);
   if (TASK_ONLY.test(before)) return /^[\p{L}\p{N}]$/u.test(typed);
+  if (HEADING_ONLY.test(before)) return /^[\p{L}\p{N}]$/u.test(typed);
   return false;
 }
 

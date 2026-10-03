@@ -147,3 +147,23 @@ describe("list shortcuts", () => {
     expect(shortcut("task", "|")).toBe("- [ ] |");
   });
 });
+
+describe("the space after heading hashes", () => {
+  it("is added from ## to ######", () => {
+    for (const hashes of ["##", "###", "####", "#####", "######"]) {
+      expect(needsMarkerSpace(hashes, "h")).toBe(true);
+    }
+    expect(needsMarkerSpace("###", "1")).toBe(true);
+  });
+
+  it("is never added after a single #, which starts a tag", () => {
+    expect(needsMarkerSpace("#", "i")).toBe(false);
+  });
+
+  it("leaves seven hashes, punctuation and mid-line hashes alone", () => {
+    expect(needsMarkerSpace("#######", "h")).toBe(false);
+    expect(needsMarkerSpace("##", "#")).toBe(false);
+    expect(needsMarkerSpace("##", "!")).toBe(false);
+    expect(needsMarkerSpace("see ##", "h")).toBe(false);
+  });
+});
