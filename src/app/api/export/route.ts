@@ -2,7 +2,7 @@ import { asc, desc } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { getDb } from "@/db";
-import { folders, notes, workSessions } from "@/db/schema";
+import { folders, images, notes, workSessions } from "@/db/schema";
 
 export const dynamic = "force-dynamic";
 
@@ -16,19 +16,35 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const db = getDb();
 
-  const [rows, folderRows, sessions] = await db.batch([
+  const [rows, folderRows, imageRows, sessions] = await db.batch([
     db.select().from(notes).orderBy(desc(notes.createdAt)),
     db.select().from(folders).orderBy(asc(folders.createdAt)),
+    // Without the pictures themselves: Vercel caps a response at 4.5 MB, which
+    // a handful of photos would pass. `npm run backup` copies the files.
+    db
+      .select({
+        id: images.id,
+        mime: images.mime,
+        bytes: images.bytes,
+        width: images.width,
+        height: images.height,
+        createdAt: images.createdAt,
+      })
+      .from(images)
+      .orderBy(asc(images.createdAt)),
     db.select().from(workSessions).orderBy(asc(workSessions.localDate), asc(workSessions.startedAt)),
   ]);
 
   const payload = {
     exportedAt: new Date().toISOString(),
-    // 2 added work_sessions; 3 added folders. Same format as `npm run backup`.
-    format: 3,
+    // 2 added work_sessions; 3 added folders; 4 added images. The same format
+    // as `npm run backup`, except that images here are listed, not included.
+    format: 4,
     count: rows.length,
     notes: rows,
     folders: folderRows,
+    images: imageRows,
+    imagesIncluded: false,
     workSessions: sessions,
   };
 

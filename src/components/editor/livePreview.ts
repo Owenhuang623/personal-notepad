@@ -10,6 +10,8 @@ import {
 } from "@codemirror/view";
 import { type SyntaxNode } from "@lezer/common";
 
+import { UPLOADING_PREFIX, uploadStatus } from "./images";
+
 /**
  * Live preview, in the manner of Bear.
  *
@@ -69,6 +71,62 @@ class CheckboxWidget extends WidgetType {
 }
 
 /** A bullet or a number, in a fixed-width box the item's wrapped lines align to. */
+/**
+ * An image, drawn in place of its `![alt](url)`. Compared by url and alt, so
+ * moving the cursor around the note never reloads the picture.
+ */
+class ImageWidget extends WidgetType {
+  constructor(
+    readonly url: string,
+    readonly alt: string,
+  ) {
+    super();
+  }
+
+  eq(other: ImageWidget) {
+    return other.url === this.url && other.alt === this.alt;
+  }
+
+  get estimatedHeight() {
+    return 240;
+  }
+
+  toDOM(view: EditorView) {
+    const wrap = document.createElement("span");
+    wrap.className = "cm-image";
+
+    if (this.url.startsWith(UPLOADING_PREFIX)) {
+      const status = uploadStatus(this.url.slice(UPLOADING_PREFIX.length));
+      wrap.classList.add("cm-image-pending");
+      wrap.textContent =
+        status === "pending"
+          ? "Uploading image…"
+          : "This image didn't finish uploading — delete this line and add it again";
+      return wrap;
+    }
+
+    const img = document.createElement("img");
+    img.src = this.url;
+    img.alt = this.alt;
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.draggable = false;
+    // The line grows when the picture arrives; let the editor re-measure.
+    img.addEventListener("load", () => view.requestMeasure());
+    img.addEventListener("error", () => {
+      wrap.classList.add("cm-image-pending");
+      wrap.textContent = `Image not found: ${this.alt || this.url}`;
+      view.requestMeasure();
+    });
+    wrap.appendChild(img);
+    return wrap;
+  }
+
+  ignoreEvent() {
+    return false;
+  }
+}
+
 class MarkerWidget extends WidgetType {
   constructor(readonly text: string) {
     super();
@@ -135,6 +193,12 @@ function listDepth(item: SyntaxNode): number {
   }
   return Math.max(depth, 1);
 }
+
+/** Shown when hovering a link: following one needs the modifier, so say which. */
+const FOLLOW_HINT =
+  typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent)
+    ? "⌘-click to open"
+    : "Ctrl-click to open";
 
 const INLINE_MARKS = new Set(["EmphasisMark", "StrikethroughMark", "HighlightMark"]);
 
@@ -271,6 +335,27 @@ function build(view: EditorView) {
           return false;
         }
 
+        /*
+         * An image shows as the picture. With the cursor on it, the markdown
+         * comes back for editing and the picture stays drawn just after it,
+         * so nothing below jumps when you click onto the line.
+         */
+        if (node.name === "Image") {
+          const url = node.node.getChild("URL");
+          const marks = node.node.getChildren("LinkMark");
+          const src = url ? state.doc.sliceString(url.from, url.to) : "";
+          const alt = marks.length >= 2 ? state.doc.sliceString(marks[0].to, marks[1].from) : "";
+          if (!src) return;
+
+          const widget = new ImageWidget(src, alt);
+          if (touches(state, node.from, node.to)) {
+            decorations.push(Decoration.widget({ widget, side: 1 }).range(node.to));
+            return;
+          }
+          replaceWith(node.from, node.to, widget);
+          return false;
+        }
+
         // Leaves just the link text: the brackets, parens and URL all hide.
         if (node.name === "LinkMark" || node.name === "URL") {
           const parent = node.node.parent;
@@ -279,7 +364,9 @@ function build(view: EditorView) {
             if (!touches(state, parent.from, parent.to)) hide(node.from, node.to);
           } else if (node.name === "URL") {
             // A bare URL is a link too, and should look like one.
-            decorations.push(Decoration.mark({ class: "cm-bare-url" }).range(node.from, node.to));
+            decorations.push(
+              Decoration.mark({ class: "cm-bare-url", attributes: { title: FOLLOW_HINT } }).range(node.from, node.to),
+            );
           }
           return;
         }
@@ -288,7 +375,9 @@ function build(view: EditorView) {
           const label = node.node.getChild("LinkMark");
           const close = node.node.getChildren("LinkMark")[1];
           if (label && close && close.from > label.to) {
-            decorations.push(Decoration.mark({ class: "cm-link-text" }).range(label.to, close.from));
+            decorations.push(
+              Decoration.mark({ class: "cm-link-text", attributes: { title: FOLLOW_HINT } }).range(label.to, close.from),
+            );
           }
           return;
         }

@@ -186,6 +186,30 @@ const base = EditorView.theme({
     textDecorationColor: "color-mix(in srgb, var(--accent) 35%, transparent)",
     textUnderlineOffset: "3px",
   },
+  /* A picture sits on its own row, at most the column's width. */
+  ".cm-image": {
+    display: "block",
+    margin: "0.35em 0",
+    lineHeight: "0",
+  },
+  ".cm-image img": {
+    display: "inline-block",
+    maxWidth: "100%",
+    maxHeight: "32rem",
+    borderRadius: "8px",
+    border: "1px solid var(--line)",
+    backgroundColor: "var(--hover)",
+  },
+  ".cm-image-pending": {
+    display: "inline-block",
+    lineHeight: "1.5",
+    padding: "0.5em 0.85em",
+    borderRadius: "8px",
+    border: "1px dashed var(--line-strong)",
+    color: "var(--ink-faint)",
+    fontSize: "0.88em",
+  },
+
   "&.cm-follow .cm-link-text, &.cm-follow .cm-bare-url, &.cm-follow .cm-hashtag": { cursor: "pointer" },
 });
 

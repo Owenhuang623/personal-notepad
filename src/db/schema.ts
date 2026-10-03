@@ -140,3 +140,29 @@ export const workSessions = pgTable(
 );
 
 export type WorkSession = typeof workSessions.$inferSelect;
+
+/**
+ * Pasted and dropped images, kept in the database beside the notes.
+ *
+ * A note refers to one as `![alt](/api/images/<id>)`, so the image sits behind
+ * the same password as the writing, comes along in `npm run backup`, and needs
+ * no second storage service. Images are shrunk in the browser before upload,
+ * so a row is typically a few hundred KB.
+ *
+ * There is deliberately no way to delete one: removing an image from a note's
+ * text must never be able to destroy the file, and an orphaned image costs a
+ * little storage, which is the cheaper mistake.
+ */
+export const images = pgTable("images", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  /** image/webp, image/jpeg, image/png or image/gif — checked on upload. */
+  mime: text("mime").notNull(),
+  /** The file itself, base64-encoded: plain text survives every JSON export intact. */
+  data: text("data").notNull(),
+  bytes: integer("bytes").notNull(),
+  width: integer("width"),
+  height: integer("height"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type Image = typeof images.$inferSelect;

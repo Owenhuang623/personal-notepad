@@ -12,6 +12,7 @@ import {
 import { useEffect, useRef } from "react";
 
 import { autoSpaceAfterMarker } from "./editor/autoSpace";
+import { imagePasting } from "./editor/images";
 import {
   continueListTight,
   deleteMarkerBackward,
@@ -37,6 +38,7 @@ export function MarkdownEditor({
   autoFocus,
   onReady,
   onTag,
+  onNotice,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -45,6 +47,8 @@ export function MarkdownEditor({
   onReady?: (handle: MarkdownEditorHandle) => void;
   /** ⌘-click on a #tag. */
   onTag?: (tag: string) => void;
+  /** Something worth a moment's message — an image that couldn't be uploaded. */
+  onNotice?: (message: string) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -59,6 +63,9 @@ export function MarkdownEditor({
 
   const onTagRef = useRef(onTag);
   onTagRef.current = onTag;
+
+  const onNoticeRef = useRef(onNotice);
+  onNoticeRef.current = onNotice;
 
   useEffect(() => {
     if (!host.current) return;
@@ -75,6 +82,7 @@ export function MarkdownEditor({
           markdown({ base: markdownLanguage, extensions: [Highlight, Hashtag], addKeymap: false }),
           livePreview({ onTag: (tag) => onTagRef.current?.(tag) }),
           autoSpaceAfterMarker,
+          imagePasting({ onError: (message) => onNoticeRef.current?.(message) }),
           // Styled transparent; it's only here to tell the heading marks which
           // line the cursor is on.
           highlightActiveLine(),

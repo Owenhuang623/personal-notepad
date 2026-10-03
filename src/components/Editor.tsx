@@ -57,6 +57,13 @@ export function Editor({
   const [content, setContent] = useState(initialContent);
   const [status, setStatus] = useState<Status>("saved");
   const [pinned, setPinned] = useState(initialPinned);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 5000);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   const contentRef = useRef(loaded);
   const savedRef = useRef(loaded);
@@ -236,6 +243,11 @@ export function Editor({
 
           <div className="flex-1" />
 
+          {notice && (
+            <span className="px-2 text-[12px] text-danger" role="status">
+              {notice}
+            </span>
+          )}
           <SaveState status={status} />
 
           {trashed ? (
@@ -288,6 +300,7 @@ export function Editor({
                 autoFocus
                 placeholder={PLACEHOLDERS[kind]}
                 onTag={(tag) => openSearch(`#${tag}`)}
+                onNotice={setNotice}
                 onReady={(handle) => {
                   editorRef.current = handle;
                   setEditorReady(true);
@@ -300,7 +313,12 @@ export function Editor({
         </div>
 
         {singleton && (
-          <div className="pointer-events-none absolute right-4 top-3">
+          <div className="pointer-events-none absolute right-4 top-3 flex items-center">
+            {notice && (
+              <span className="px-2 text-[12px] text-danger" role="status">
+                {notice}
+              </span>
+            )}
             <SaveState status={status} />
           </div>
         )}

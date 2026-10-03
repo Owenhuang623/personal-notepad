@@ -102,8 +102,17 @@ route — one expression, one test, no second copy to drift.
   per day, derived from `journal_date` by `groupJournal` (`lib/journal.ts`).
   Those year and month folders are never stored — don't add rows for them.
   Journal entries never carry a `folder_id`; `fileIntoFolderWhere` refuses it.
-- Backups and `/api/export` are format 3 and include `folders`; the backup's
-  `markdown/` mirrors the folder tree on disk.
+- Images live in the `images` table (base64 text) and notes refer to them as
+  `![](/api/images/<id>)`, served behind the same sign-in. Uploads are shrunk
+  in the browser (`editor/images.ts`) and the server accepts only PNG, JPEG,
+  GIF and WebP by their magic bytes (`sniffImageType`) — never SVG. There is
+  no delete path for images, on purpose: editing a note must never be able
+  to destroy a file. Don't add one without a soft-delete like notes have.
+- Backups are format 4: `notes.json` includes folders and images, images are
+  also written to `images/` as files, and the `markdown/` copies mirror the
+  folder tree with image links pointed at those files. `/api/export` lists
+  images without their bytes (`imagesIncluded: false`) — Vercel caps a
+  response at 4.5 MB.
 - Dates that represent a *day* (journal entries) are computed in the browser.
   The server runs in UTC and would misfile anything written late in the evening.
 - Client components render dates only after mount, via `ClientDate`, for the

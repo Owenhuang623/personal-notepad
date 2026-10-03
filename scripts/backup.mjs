@@ -24,6 +24,7 @@ const sql = neon(url);
 const rows = await sql`select * from notes order by created_at desc`;
 const sessions = await sql`select * from work_sessions order by local_date, started_at`;
 const folders = await sql`select * from folders order by created_at`;
+const imageRows = await sql`select * from images order by created_at`;
 
 const stamp = new Date().toISOString().replace(/:/g, "-").slice(0, 16);
 const dir = path.join("backups", stamp);
@@ -34,12 +35,15 @@ await fs.writeFile(
   JSON.stringify(
     {
       exportedAt: new Date().toISOString(),
-      // 2 added work_sessions; 3 added folders (and notes.folder_id). A format
-      // 2 file has no folders, which a reader should take as "all top level".
-      format: 3,
+      // 2 added work_sessions; 3 added folders (and notes.folder_id); 4 added
+      // images. A file without folders means "all top level"; without images,
+      // that there were none to copy.
+      format: 4,
       count: rows.length,
       notes: rows,
       folders,
+      // Each image is also written to images/ as a real file.
+      images: imageRows,
       workSessions: sessions,
     },
     null,
@@ -85,10 +89,28 @@ function folderDirs(id) {
   return parts;
 }
 
+/*
+ * Images as ordinary files, and the markdown copies pointed at them — so a
+ * note opened from this folder in any editor shows its pictures, with no app
+ * and no server involved.
+ */
+const EXTENSIONS = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
+const imageFile = new Map(imageRows.map((image) => [image.id, `${image.id}.${EXTENSIONS[image.mime] ?? "bin"}`]));
+if (imageRows.length) await fs.mkdir(path.join(dir, "images"), { recursive: true });
+for (const image of imageRows) {
+  await fs.writeFile(path.join(dir, "images", imageFile.get(image.id)), Buffer.from(image.data, "base64"));
+}
+
 for (const row of rows) {
-  const where = path.join(dir, "markdown", ...(row.folder_id ? folderDirs(row.folder_id) : []));
+  const dirs = row.folder_id ? folderDirs(row.folder_id) : [];
+  const where = path.join(dir, "markdown", ...dirs);
   await fs.mkdir(where, { recursive: true });
-  await fs.writeFile(path.join(where, slug(row)), row.content);
+
+  const toImages = path.posix.join(...new Array(dirs.length + 1).fill(".."), "images");
+  const content = row.content.replace(/\/api\/images\/([0-9a-f-]{36})/gi, (whole, id) =>
+    imageFile.has(id.toLowerCase()) ? `${toImages}/${imageFile.get(id.toLowerCase())}` : whole,
+  );
+  await fs.writeFile(path.join(where, slug(row)), content);
 }
 
 /*
@@ -118,7 +140,8 @@ const seconds = sessions.reduce((total, row) => total + row.duration_seconds, 0)
 const open = sessions.filter((row) => !row.ended_at).length;
 
 console.log(
-  `Backed up ${rows.length} notes (${trashed} in trash), ${folders.length} folders and ` +
+  `Backed up ${rows.length} notes (${trashed} in trash), ${folders.length} folders, ` +
+    `${imageRows.length} images and ` +
     `${sessions.length} work sessions (${(seconds / 3600).toFixed(1)}h` +
     `${open ? `, ${open} still running` : ""}) to ${dir}`,
 );
