@@ -44,7 +44,6 @@ export function NoteView({ id }: { id: string }) {
       kind={note.kind}
       // Read once, at mount: the editor owns the text from then on.
       initialContent={note.content}
-      initialPinned={note.pinnedAt !== null}
       journalDate={note.journalDate}
       trashed={note.deletedAt !== null}
     />

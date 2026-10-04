@@ -1,14 +1,12 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { countWords } from "@/lib/format";
 
 import { useNotes, useSidebar } from "./AppShell";
 import { ClientDate } from "./ClientDate";
-import { ConfirmButton } from "./ConfirmButton";
 import type { MarkdownEditorHandle } from "./MarkdownEditor";
 
 /*
@@ -20,7 +18,6 @@ import type { MarkdownEditorHandle } from "./MarkdownEditor";
 const MarkdownEditor = dynamic(() => import("./MarkdownEditor").then((m) => m.MarkdownEditor), {
   ssr: false,
 });
-import { PinIcon } from "./PinIcon";
 
 const PLACEHOLDERS = {
   scratch: "Start typing…",
@@ -37,14 +34,12 @@ export function Editor({
   noteId,
   kind,
   initialContent,
-  initialPinned,
   journalDate,
   trashed = false,
 }: {
   noteId: string;
   kind: "scratch" | "saved" | "daily";
   initialContent: string;
-  initialPinned: boolean;
   journalDate: string | null;
   trashed?: boolean;
 }) {
@@ -56,7 +51,6 @@ export function Editor({
   const [loaded] = useState(initialContent);
   const [content, setContent] = useState(initialContent);
   const [status, setStatus] = useState<Status>("saved");
-  const [pinned, setPinned] = useState(initialPinned);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -72,7 +66,6 @@ export function Editor({
 
   const { refresh, updateContent, markSaved } = useNotes();
   const { setOpen, openSearch } = useSidebar();
-  const router = useRouter();
 
   const draftKey = `np:draft:${noteId}`;
   const wordCount = countWords(content);
@@ -175,34 +168,6 @@ export function Editor({
     if (!singleton) updateContent(noteId, value);
   }
 
-  async function togglePin() {
-    const next = !pinned;
-    setPinned(next); // optimistic — the sidebar reorders as soon as refresh lands
-
-    const response = await fetch(`/api/notes/${noteId}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ pinned: next }),
-    });
-
-    if (!response.ok) {
-      setPinned(!next);
-      return;
-    }
-
-    await refresh();
-  }
-
-  async function deleteNote() {
-    const response = await fetch(`/api/notes/${noteId}`, { method: "DELETE" });
-    if (!response.ok) return;
-
-    window.localStorage.removeItem(draftKey);
-    savedRef.current = contentRef.current; // stop the unmount flush from recreating it
-    await refresh();
-    router.push("/");
-  }
-
   async function restoreNote() {
     const response = await fetch(`/api/notes/${noteId}`, {
       method: "PATCH",
@@ -221,8 +186,8 @@ export function Editor({
         *
         * A note's header carries no title either. The first line of the note
         * is the title, drawn as one just below — repeating it in a
-        * bordered bar was the heaviest thing on the page. What's left is a few
-        * quiet controls floating over the paper.
+        * bordered bar was the heaviest thing on the page. What's left is the
+        * save dot, and Restore for a note in the trash.
         */}
       {!singleton && (
         <header className="flex h-12 shrink-0 items-center gap-1 px-3 sm:px-4">
@@ -250,7 +215,9 @@ export function Editor({
           )}
           <SaveState status={status} />
 
-          {trashed ? (
+          {/* Pinning and deleting live in the note's menu in the sidebar; the
+              page itself stays clear. A trashed note keeps its way back. */}
+          {trashed && (
             <button
               type="button"
               onClick={() => void restoreNote()}
@@ -258,22 +225,6 @@ export function Editor({
             >
               Restore
             </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={() => void togglePin()}
-                aria-pressed={pinned}
-                aria-label={pinned ? "Unpin" : "Pin"}
-                title={pinned ? "Unpin from the sidebar" : "Pin to the top of the sidebar"}
-                className={`rounded-md p-2 transition-colors hover:bg-hover ${
-                  pinned ? "text-accent" : "text-ink-faint hover:text-ink"
-                }`}
-              >
-                <PinIcon className="h-[15px] w-[15px]" />
-              </button>
-              <ConfirmButton label="Delete" confirmLabel="Move to trash?" onConfirm={() => void deleteNote()} />
-            </>
           )}
         </header>
       )}

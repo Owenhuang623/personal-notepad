@@ -32,7 +32,6 @@ export default async function DashboardPage() {
         noteId={note.id}
         kind="scratch"
         initialContent={note.content}
-        initialPinned={note.pinnedAt !== null}
           journalDate={note.journalDate}
       />
     </>
